@@ -143,7 +143,10 @@ main{position:relative;min-height:0}
         <div id="rosterMap"></div>
         <div id="rosterStatus"></div>
         <div id="censusBox"></div>
-        <label class="toggle"><input type="checkbox" id="suppress"> Show counts under 5 as “&lt;5” (use when sharing outside BRYC)</label>
+        <div id="exportBox" style="display:none;margin-top:10px">
+          <p class="note">One file with Fellow numbers for every House and Senate district, ready to import into the BRYC at the Capitol tracker. It holds counts only, no names or addresses.</p>
+          <button type="button" id="exportAll">Export all districts for the tracker</button>
+        </div>
       </div>
     </details>
 
@@ -205,7 +208,7 @@ const S = {data:{}, legis:{lower:{}, upper:{}}, src:{}, fellows:[], roster:null,
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const status = msg => { $('status').textContent = msg || ''; };
-const cnt = n => (S.suppress && n > 0 && n < 5) ? '<5' : n;
+const cnt = n => n;
 const CH = {lower:{key:'house', title:'House District', short:'HD'}, upper:{key:'senate', title:'Senate District', short:'SD'}};
 
 /* ===== Geometry ===== */
@@ -755,6 +758,7 @@ function assignFellows(){
              (none?`<p class="note">${none} Fellows have neither a street address nor a ZIP code, so they can't be placed in any district.</p>`:''); })()+
     (S.unmatched.length?`<p class="note">${S.unmatched.length} school names didn't match the city's school list.</p>`:'');
   renderCensusHelper(total-mapped);
+  $('exportBox').style.display = S.fellows.length ? 'block' : 'none';
   drawFellows();
   if(S.highlight){ const h=$('pickHouse').value, s=$('pickSenate').value; if(h) districtReport('lower',+h); else if(s) districtReport('upper',+s); }
 }
@@ -787,6 +791,28 @@ function computeZipShares(){
   }
 }
 
+/* ===== Export every district for the BRYC at the Capitol tracker ===== */
+function districtNumbers(ch,num){
+  const meta=CH[ch], key='_'+meta.key;
+  const living=S.fellows.filter(f=>f[meta.key]===num);
+  const enrolled=S.fellows.filter(x=>x.schoolId && x.schoolId[key]===num).length;
+  const schools=(S.data.schools?S.data.schools.features:[]).filter(f=>f[key]===num).length;
+  const top=groupCount(living.filter(f=>f.school),f=>f.school).slice(0,4).map(([n,c])=>`${n} ${cnt(c)}`).join(', ');
+  const grades=S.roster&&S.roster.map.grade ? groupCount(living,f=>f.grade||'not listed').sort((a,b)=>String(a[0]).localeCompare(String(b[0]),undefined,{numeric:true})).map(([g,c])=>`${g}: ${cnt(c)}`).join(', ') : '';
+  let zipEst=0;
+  groupCount(S.fellows.filter(f=>f.zipOnly),f=>f.zip5).forEach(([z,n])=>{ const share=((S.zipShares[z]||{})[meta.key]||{})[num]||0; zipEst+=n*share; });
+  return {chamber: ch==='upper'?'Senate':'House', district:String(num), legislator:legName(ch,num),
+    fellowsLive:String(cnt(living.length)), fellowsSchool:String(cnt(enrolled)), schoolsInDistrict:String(schools),
+    topSchools:top, grades, zipEstimate:Math.round(zipEst)};
+}
+$('exportAll').addEventListener('click',()=>{
+  if(!S.fellows.length){ alert('Load the Fellow roster first.'); return; }
+  const rows=[];
+  [['lower','house'],['upper','senate']].forEach(([ch,k])=>(S.data[k]?S.data[k].features:[]).map(f=>f._num).filter(Boolean).sort((a,b)=>a-b).forEach(n=>rows.push(districtNumbers(ch,n))));
+  const out={source:'BRYC District Lookup', generated:new Date().toISOString(), roster:S.roster?S.roster.name:'', rows};
+  download('bryc-district-numbers.json', JSON.stringify(out,null,1), 'application/json');
+});
+
 function renderCensusHelper(missing){
   const canGeo=S.fellows.filter(f=>f.lat==null && f.street).length;
   if(!canGeo){ $('censusBox').innerHTML=''; return; }
@@ -810,7 +836,6 @@ function renderCensusHelper(missing){
     $('rosterStatus').insertAdjacentHTML('beforeend',`<p class="ok">Added coordinates for ${n} Fellows from the Census results.</p>`);
   };
 }
-$('suppress').addEventListener('change',e=>{ S.suppress=e.target.checked; const h=$('pickHouse').value, s=$('pickSenate').value; if(h) districtReport('lower',+h); else if(s) districtReport('upper',+s); });
 
 /* ===== Data sources panel ===== */
 function renderSources(){
