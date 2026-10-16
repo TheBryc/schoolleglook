@@ -829,11 +829,36 @@ function renderCensusHelper(missing){
   $('censusIn').onchange=async e=>{
     const file=e.target.files[0]; if(!file) return;
     const rows=Papa.parse(await file.text(),{header:false,skipEmptyLines:true}).data;
-    const byId=new Map();
-    rows.forEach(r=>{ if(String(r[2]).toLowerCase()==='match' && r[5]){ const [lo,la]=String(r[5]).split(',').map(Number); if(isFinite(lo)&&isFinite(la)) byId.set(String(r[0]).trim(),[la,lo]); } });
-    let n=0; S.fellows.forEach(f=>{ const c=byId.get(f.id); if(c && f.lat==null){ [f.lat,f.lon]=c; n++; } });
+    const isResults=rows.some(r=>/^(match|no_match|tie)$/i.test(String(r[2]||'').trim()));
+    if(!isResults){
+      $('rosterStatus').insertAdjacentHTML('beforeend',`<p class="warn">That file doesn't look like the Census results. Upload the file you downloaded <b>from</b> geocoding.geo.census.gov after running the batch (often named GeocodeResults.csv), not the file you uploaded to it.</p>`);
+      e.target.value=''; return;
+    }
+    const norm=t=>String(t||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+    const byId=new Map(), byAddr=new Map(); let matched=0;
+    rows.forEach(r=>{
+      if(String(r[2]).trim().toLowerCase()!=='match' || !r[5]) return;
+      const [lo,la]=String(r[5]).split(',').map(Number); if(!isFinite(lo)||!isFinite(la)) return;
+      matched++;
+      byId.set(String(r[0]).trim(),[la,lo]);
+      const parts=String(r[1]||'').split(','); const zip=(String(r[1]).match(/\b\d{5}\b(?!.*\b\d{5}\b)/)||[])[0]||'';
+      byAddr.set(norm(parts[0])+'|'+zip,[la,lo]);
+    });
+    let n=0;
+    S.fellows.forEach(f=>{ if(f.lat!=null) return;
+      const c=byId.get(f.id) || byAddr.get(norm(f.street)+'|'+((String(f.zip).match(/\d{5}/)||[])[0]||''));
+      if(c){ [f.lat,f.lon]=c; n++; } });
     assignFellows();
-    $('rosterStatus').insertAdjacentHTML('beforeend',`<p class="ok">Added coordinates for ${n} Fellows from the Census results.</p>`);
+    const left=S.fellows.filter(f=>f.lat==null && f.street).length;
+    $('rosterStatus').insertAdjacentHTML('beforeend',`<p class="${n?'ok':'warn'}">The Census matched ${matched} of ${rows.length} addresses. Added coordinates for ${n} Fellows.${left?` ${left} addresses the Census couldn't match are counted by ZIP code only.`:''}</p>`+
+      (n?`<p class="note">So you don't have to repeat the Census step: <button type="button" class="quiet" id="rosterWithCoords">Download roster with coordinates</button> and use that file as your roster next time. Latitude and Longitude will fill in on their own. It contains home addresses, so keep it off GitHub.</p>`:
+      `<p class="warn">None of the results lined up with this roster. Make sure you loaded the same roster and sheet you used to make the Census file, with the same Fellow ID column choice, then try again.</p>`));
+    if($('rosterWithCoords')) $('rosterWithCoords').onclick=()=>{
+      const src=S.roster.sheets[S.roster.sheet].rows;
+      const out=src.map((r,i)=>({...r, Latitude:S.fellows[i]&&S.fellows[i].lat!=null?S.fellows[i].lat:'', Longitude:S.fellows[i]&&S.fellows[i].lon!=null?S.fellows[i].lon:''}));
+      download('roster_with_coordinates.csv', Papa.unparse(out), 'text/csv');
+    };
+    e.target.value='';
   };
 }
 
