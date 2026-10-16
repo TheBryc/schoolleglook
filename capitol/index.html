@@ -265,6 +265,12 @@ function people(who){return String(who||"").split(/,|&| and /).map(s=>s.trim()).
 function lastContact(id){let best=null; for(const t of Object.values(S.tps)){ if(t.legId===id){const d=pd(t.date); if(d&&(!best||d>best)) best=d;} } return best;}
 function points(){let total=0; const by={}; for(const t of Object.values(S.tps)){ const p=TYPES[t.type]||1; total+=p; for(const w of people(t.who)){ if(/broadwater|alum/i.test(w)) continue; by[w]=(by[w]||0)+p; } } return {total,by};}
 function sources(){const set=new Set(["Josh","Lucas","Elin","Logan Anderson","Chris Broadwater"]); for(const l of Object.values(S.legs)) for(const n of (l.notes||[])) if(n.source) set.add(n.source); return [...set].sort();}
+const FIELD_LABELS={status:"status",owner:"owner",nextStep:"next step",nextDue:"next step due",askCO:"capital outlay role",askSupp:"$1.2M ask role",why:"why they matter",connection:"how we know them",fellowsLive:"Fellows who live here",fellowsSchool:"Fellows who attend school here",schoolsInDistrict:"schools",grades:"Fellows by grade",topSchools:"top schools"};
+function clip(t,n){ t=String(t||""); return t.length>n?t.slice(0,n-1)+"…":t; }
+function legName(id){ const l=S.legs[id]; return l?title(l):""; }
+async function logActivity(text,legId){ if(!S.db) return; try{ await S.db.collection("activity").doc().set({at:new Date().toISOString(),by:S.userName||"Someone",text,legId:legId||""}); }catch(_){} }
+function ago(isoStr){ const d=new Date(isoStr); if(isNaN(d)) return ""; const m=Math.round((Date.now()-d)/60000); if(m<1) return "just now"; if(m<60) return m+" min ago"; const h=Math.round(m/60); if(h<24) return h+(h===1?" hour ago":" hours ago"); const dd=Math.round(h/24); if(dd<7) return dd+(dd===1?" day ago":" days ago"); return d.toLocaleDateString("en-US",{month:"short",day:"numeric"}); }
+function activityList(items){ return `<ul class="list">${items.map(a=>`<li><span style="flex:1"><strong>${esc(a.by)}</strong> ${esc(a.text)}${a.legId&&S.legs[a.legId]?` <a href="#" data-open="${esc(a.legId)}">Open</a>`:""}</span><span class="small muted" style="white-space:nowrap">${esc(ago(a.at))}</span></li>`).join("")}</ul>`; }
 function shrink(file){ return new Promise((res,rej)=>{ const img=new Image(); img.onload=()=>{ const n=240, c=document.createElement("canvas"); c.width=n; c.height=n; const k=Math.max(n/img.width,n/img.height), w=img.width*k, h=img.height*k; c.getContext("2d").drawImage(img,(n-w)/2,(n-h)/4,w,h); res(c.toDataURL("image/jpeg",.82)); URL.revokeObjectURL(img.src); }; img.onerror=rej; img.src=URL.createObjectURL(file); }); }
 function avatar(l,big){const cls="avatar"+(l.chamber==="Senate"?" senate":"")+(big?" big":""); return l.photo?`<span class="${cls}"><img alt="" src="${esc(l.photo)}"></span>`:l.photoId?`<span class="${cls}"><img alt="" src="/_blob/${esc(l.photoId)}"></span>`:`<span class="${cls}" aria-hidden="true">${esc(initials(l.name))}</span>`;}
 function stars(lvl){let s=""; for(let i=1;i<=5;i++) s+= i<=lvl?"★":`<span class="off">★</span>`; return `<span class="stars" aria-label="${lvl} of 5 stars">${s}</span>`;}
@@ -338,6 +344,7 @@ function vHome(){
     </div>
     <div class="panel tower-wrap">${towerSVG(floors)}<p style="font-weight:700;margin-top:8px">Floor ${floors} of ${FLOORS}</p><p class="small muted">${PTS_PER_FLOOR} points per floor</p></div>
   </div>
+  <div class="panel" style="margin-top:22px"><h3>Latest updates</h3><p class="small muted">Every change anyone makes, newest first.</p>${(()=>{ const a=Object.values(S.act||{}).sort((x,y)=>String(y.at).localeCompare(String(x.at))).slice(0,15); return a.length?activityList(a):`<p class="muted">No updates yet. Changes show up here as soon as someone saves.</p>`; })()}</div>
   <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(320px,1fr));margin-top:22px">
     <div class="panel"><h3>Next up</h3>${next?`<ul class="list">${next}</ul>`:`<p class="muted">No next steps yet. Open a legislator and add one.</p>`}</div>
     <div class="panel"><h3>Going cold</h3><p class="small muted">Priority legislators with no logged contact in 30+ days.</p>${cold.length?`<ul class="list">${cold.map(x=>`<li><a href="#" data-open="${esc(x.id)}" style="flex:1">${esc(title(x.l))}</a><span class="chip cold">${x.lc?days(x.lc,t)+" days":"no date logged"}</span></li>`).join("")}</ul>`:`<p>Nobody’s going cold. Nice.</p>`}</div>
@@ -445,7 +452,7 @@ function updateCalcOut(){
   const pct=c.target>0?Math.min(100,m.state/c.target*100):0; const mt=$("#meter"); mt.firstElementChild.style.width=pct+"%"; mt.classList.toggle("over",m.state>c.target);
   $("#gap").textContent= m.state>=c.target? (m.state>c.target?`Over the target by ${money(m.state-c.target)}.`:"Right on target.") : `${money(c.target-m.state)} short of the ${money(c.target)} target.`;
 }
-function saveCalcSoon(){ clearTimeout(calcTimer); calcTimer=setTimeout(async()=>{ if(!S.db) return; const ok=await write(S.db.doc("settings/calc"),JSON.parse(JSON.stringify(calcLocal)),"set"); calcTimer=null; if(ok){ calcLocal=null; toast("Calculator saved"); } },900); }
+function saveCalcSoon(){ clearTimeout(calcTimer); calcTimer=setTimeout(async()=>{ if(!S.db) return; const ok=await write(S.db.doc("settings/calc"),JSON.parse(JSON.stringify(calcLocal)),"set"); calcTimer=null; if(ok){ calcLocal=null; toast("Calculator saved"); const now=Date.now(); if(!saveCalcSoon.last||now-saveCalcSoon.last>10*60000){ saveCalcSoon.last=now; logActivity("updated the capital outlay calculator"); } } },900); }
 function vBills(){
   const arr=Object.entries(S.bills).sort((a,b)=>(a[1].order||0)-(b[1].order||0));
   const ro=S.readOnly||!S.db;
@@ -562,9 +569,10 @@ function openLeg(id){
      <label class="f">Date<input type="date" id="nDate" value="${iso(today())}"></label>
      <datalist id="srcList">${sources().map(x=>`<option value="${esc(x)}">`).join("")}</datalist>
      <p class="full"><button class="btn ghost" data-addnote="${esc(id)}">Add note</button></p></div>`:""}
+   ${(()=>{ const a=Object.values(S.act||{}).filter(x=>x.legId===id).sort((x,y)=>String(y.at).localeCompare(String(x.at))).slice(0,10); return a.length?`<h3>Recent changes</h3>${activityList(a)}`:""; })()}
    <h3>History</h3>${hist.length?`<ul class="list">${hist.map(t=>`<li><span class="when">${fmt(t.date)}</span><span><strong>${esc(t.type)}</strong>${t.who?" with "+esc(t.who):""}<br>${esc(t.summary)}${t.followUp?`<br><span class="small muted">Follow-up: ${esc(t.followUp)}</span>`:""}</span></li>`).join("")}</ul>`:`<p class="muted">No touchpoints yet.</p>`}`;
   body.dataset.leg=id; if(!dlg.open) dlg.showModal();
-  const ph=$("#photo"); if(ph) ph.onchange=async()=>{ const f=ph.files[0]; if(!f) return; try{ const url=await shrink(f); await write(S.db.doc("legislators/"+id),{photo:url},"update"); toast("Photo saved"); }catch(e){ toast("Upload failed: "+(e&&e.message||"try a smaller image")); } };
+  const ph=$("#photo"); if(ph) ph.onchange=async()=>{ const f=ph.files[0]; if(!f) return; try{ const url=await shrink(f); if(await write(S.db.doc("legislators/"+id),{photo:url},"update")){ toast("Photo saved"); logActivity("added a photo for "+legName(id),id); } }catch(e){ toast("Upload failed: "+(e&&e.message||"try a smaller image")); } };
 }
 function openLog(legId){
   const ro=S.readOnly||!S.db; if(ro){ toast(S.db?"You have view-only access.":"Sign in to log touchpoints."); return; }
@@ -587,7 +595,7 @@ function openLog(legId){
     const data={legId:legId2,date,type:$("#lgType").value,who:$("#lgWho").value.trim(),topic:"",summary:$("#lgSum").value.trim(),followUp:$("#lgFu").value.trim(),owner:$("#lgOwn").value.trim(),due:$("#lgDue").value,done:false};
     const btn=$("#lgSave"); btn.disabled=true;
     const ok=await write(S.db.collection("touchpoints").doc(),data,"set"); btn.disabled=false;
-    if(ok){ toast(`Logged. +${TYPES[data.type]||1} points`); dlg.close(); } };
+    if(ok){ toast(`Logged. +${TYPES[data.type]||1} points`); dlg.close(); logActivity(`logged a ${data.type.toLowerCase()} with ${legName(legId2)}${data.summary?": “"+clip(data.summary,120)+"”":""}`,legId2); } };
 }
 async function importNums(file){
   let data; try{ data=JSON.parse(await file.text()); }catch(_){ toast("That file isn’t the District Lookup export."); return; }
@@ -620,7 +628,7 @@ function openAddLeg(){
   $("#alSave").onclick=async()=>{ const name=$("#alName").value.trim(), dist=$("#alDist").value.trim(); if(!name||!dist){toast("Add a name and district."); return;}
     const id=(name.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"")||"leg")+"-"+dist;
     const data={name,chamber:$("#alCh").value,district:dist,party:$("#alParty").value,parishes:$("#alPar").value.trim(),money:$("#alMoney").value.trim(),committees:"",verified:"No",why:"",email:"",phone:"",la:"",owner:"",status:"Not contacted",tier:"3",region:$("#alReg").value,connection:$("#alConn").value.trim(),notes:[],nextStep:"",nextDue:"",askCO:"",askSupp:"",photoId:"",fellowsLive:"",fellowsSchool:"",schoolsInDistrict:"",topSchools:"",grades:""};
-    if(await write(S.db.doc("legislators/"+id),data,"set")){ toast("Legislator added"); dlg.close(); } };
+    if(await write(S.db.doc("legislators/"+id),data,"set")){ toast("Legislator added"); dlg.close(); logActivity("added "+(data.chamber==="Senate"?"Sen. ":"Rep. ")+name+" to the tracker",id); } };
 }
 function openAddMs(){
   if(S.readOnly||!S.db){ toast("Sign in to add dates."); return; }
@@ -630,7 +638,7 @@ function openAddMs(){
   <p style="margin-top:16px"><button class="btn" id="msSave">Add to timeline</button></p>`;
   if(!dlg.open) dlg.showModal();
   $("#msSave").onclick=async()=>{ const d=$("#msDate").value,t=$("#msTitle").value.trim(); if(!d||!t){toast("Add a date and a title."); return;}
-    const ok=await write(S.db.collection("milestones").doc(),{date:d,title:t,detail:$("#msDet").value.trim(),kind:$("#msKind").value,source:"Added by team"},"set"); if(ok){toast("Added to timeline"); dlg.close();} };
+    const ok=await write(S.db.collection("milestones").doc(),{date:d,title:t,detail:$("#msDet").value.trim(),kind:$("#msKind").value,source:"Added by team"},"set"); if(ok){toast("Added to timeline"); dlg.close(); logActivity("added “"+clip(t,80)+"” to the timeline on "+fmt(d));} };
 }
 
 // ---------- events ----------
@@ -641,19 +649,19 @@ document.addEventListener("click",async e=>{
   const lg=e.target.closest("[data-log]"); if(lg){ openLog(lg.dataset.log); return; }
   if(e.target.closest("[data-close]")){ dlg.close(); return; }
   const fl=e.target.closest("[data-filter]"); if(fl){ S.filter=fl.dataset.filter; render(); return; }
-  const dn=e.target.closest("[data-done]"); if(dn){ if(await write(S.db&&S.db.doc("touchpoints/"+dn.dataset.done),{done:true},"update")) toast("Marked done"); return; }
-  const sv=e.target.closest("[data-saveleg]"); if(sv){ const id=sv.dataset.saveleg, upd={}; body.querySelectorAll("[data-lf]").forEach(el=>{ upd[el.dataset.lf]=el.value; }); sv.disabled=true; const ok=await write(S.db.doc("legislators/"+id),upd,"update"); sv.disabled=false; if(ok){ toast("Saved"); } return; }
-  const st=e.target.closest("[data-stage]"); if(st){ const [id,ix]=st.dataset.stage.split(":"); if(await write(S.db&&S.db.doc("bills/"+id),{stage:+ix},"update")) toast("Stage updated"); return; }
+  const dn=e.target.closest("[data-done]"); if(dn){ if(await write(S.db&&S.db.doc("touchpoints/"+dn.dataset.done),{done:true},"update")){ toast("Marked done"); const tp=S.tps[dn.dataset.done]||{}; logActivity("marked done: “"+clip(tp.followUp,100)+"”",tp.legId); } return; }
+  const sv=e.target.closest("[data-saveleg]"); if(sv){ const id=sv.dataset.saveleg, upd={}; body.querySelectorAll("[data-lf]").forEach(el=>{ upd[el.dataset.lf]=el.value; }); sv.disabled=true; const old=S.legs[id]||{}; const changed=Object.keys(upd).filter(k=>String(old[k]??"")!==String(upd[k]??"")); if(!changed.length){ sv.disabled=false; toast("No changes to save"); return; } const ok=await write(S.db.doc("legislators/"+id),upd,"update"); sv.disabled=false; if(ok){ toast("Saved"); const parts=changed.slice(0,3).map(k=>k==="status"?`status to “${upd[k]}”`:k==="owner"?`owner to ${upd[k]||"nobody"}`:k==="nextStep"?`next step to “${clip(upd[k],80)}”`:(FIELD_LABELS[k]||k)); logActivity(`updated ${legName(id)}: ${parts.join(", ")}${changed.length>3?` and ${changed.length-3} more`:""}`,id); } return; }
+  const st=e.target.closest("[data-stage]"); if(st){ const [id,ix]=st.dataset.stage.split(":"); if(await write(S.db&&S.db.doc("bills/"+id),{stage:+ix},"update")){ toast("Stage updated"); const b=S.bills[id]||{}; logActivity(`moved ${b.number||b.key||id} to “${STAGES[+ix]}”`); } return; }
   if(e.target.closest("[data-addms]")){ openAddMs(); return; }
   const an=e.target.closest("[data-addnote]"); if(an){ const id=an.dataset.addnote; const text=$("#nText").value.trim(); if(!text){toast("Write the note first."); return;}
     const notes=[...(S.legs[id].notes||[]),{text,source:$("#nSrc").value.trim(),date:$("#nDate").value}];
-    an.disabled=true; if(await write(S.db.doc("legislators/"+id),{notes},"update")){ toast("Note added"); setTimeout(()=>openLeg(id),300);} an.disabled=false; return; }
+    an.disabled=true; if(await write(S.db.doc("legislators/"+id),{notes},"update")){ toast("Note added"); setTimeout(()=>openLeg(id),300); const src=$("#nSrc").value.trim(); logActivity(`added a note on ${legName(id)}${src?" (from "+src+")":""}: “${clip(text,140)}”`,id);} an.disabled=false; return; }
   const dn2=e.target.closest("[data-delnote]"); if(dn2){ const [id,ix]=dn2.dataset.delnote.split(":"); if(!confirm("Delete this note?")) return; const notes=(S.legs[id].notes||[]).filter((_,i)=>i!==+ix);
-    if(await write(S.db.doc("legislators/"+id),{notes},"update")){ toast("Note deleted"); setTimeout(()=>openLeg(id),300);} return; }
+    if(await write(S.db.doc("legislators/"+id),{notes},"update")){ toast("Note deleted"); setTimeout(()=>openLeg(id),300); logActivity("deleted a note on "+legName(id),id);} return; }
   if(e.target.closest("[data-addleg]")){ openAddLeg(); return; }
   if(e.target.closest("[data-signin]")){ signIn(); return; }
   if(e.target.closest("[data-signout]")){ firebase.auth().signOut(); return; }
-  const dm=e.target.closest("[data-delms]"); if(dm){ if(!confirm("Remove this date from the timeline?")) return; try{ await S.db.doc("milestones/"+dm.dataset.delms).delete(); toast("Removed"); }catch(_){ toast("Couldn’t remove it."); } return; }
+  const dm=e.target.closest("[data-delms]"); if(dm){ if(!confirm("Remove this date from the timeline?")) return; try{ const m=S.ms[dm.dataset.delms]||{}; await S.db.doc("milestones/"+dm.dataset.delms).delete(); toast("Removed"); logActivity("removed “"+clip(m.title,80)+"” from the timeline"); }catch(_){ toast("Couldn’t remove it."); } return; }
   if(e.target.id==="addItem"){ const n=$("#newItem").value.trim(); if(!n) return; calcLocal=JSON.parse(JSON.stringify(calcData())); calcLocal.items.push({id:"u"+Date.now(),name:n,eligibility:"Check",rule:"Confirm with Chris or FP&C",proof:"",cost:0,include:true,note:""}); doRender(); saveCalcSoon(); return; }
 });
 dlg.addEventListener("click",e=>{ if(e.target===dlg) dlg.close(); });
@@ -666,7 +674,7 @@ document.addEventListener("change",async e=>{
   if(e.target.id==="sort"){ S.sort=e.target.value; render(); return; }
   if(e.target.id==="seedFile"){ const f=e.target.files[0]; e.target.value=""; if(f) importSeed(f); return; }
   if(e.target.id==="importNums"){ const f=e.target.files[0]; e.target.value=""; if(f) importNums(f); return; }
-  const bf=e.target.dataset&&e.target.dataset.bf; if(bf){ const [id,k]=bf.split(":"); if(await write(S.db&&S.db.doc("bills/"+id),{[k]:e.target.value},"update")) toast("Saved"); }
+  const bf=e.target.dataset&&e.target.dataset.bf; if(bf){ const [id,k]=bf.split(":"); if(await write(S.db&&S.db.doc("bills/"+id),{[k]:e.target.value},"update")){ toast("Saved"); const b=S.bills[id]||{}; logActivity(`updated ${b.number||b.key||id}: ${k==="line"?"BRYC line item":k} to “${clip(e.target.value,60)}”`); } }
 });
 
 // ---------- boot ----------
@@ -696,10 +704,11 @@ async function signIn(){
     const ok=u&&u.email&&u.email.toLowerCase().endsWith("@"+window.ALLOWED_DOMAIN.toLowerCase());
     if(u&&!ok){ S.authError=`${u.email} isn’t a @${window.ALLOWED_DOMAIN} account.`; await firebase.auth().signOut(); return; }
     if(!u){ S.needSignIn=true; S.db=null; Object.keys(S.loaded).forEach(k=>S.loaded[k]=false); $("#sync").innerHTML="Signed out"; render(); return; }
-    S.needSignIn=false; S.authError=""; S.db=fs; S.assets={upload:true};
+    S.needSignIn=false; S.authError=""; S.db=fs; S.assets={upload:true}; S.userName=(u.displayName||u.email||"").split(" ")[0]||u.email;
     $("#sync").innerHTML=`Live, ${esc(u.email)} <a href="#" data-signout>Sign out</a>`;
     const sub=(path,key)=>unsubs.push(fs.collection(path).onSnapshot(snap=>{ const o={}; snap.docs.forEach(d=>o[d.id]=d.data()); S[key]=o; S.loaded[key]=true; render(); },err=>{ if(err&&err.code==="permission-denied"){ S.readOnly=true; toast("This account can’t open the tracker."); } else $("#sync").textContent="Reconnecting…"; }));
     sub("legislators","legs"); sub("touchpoints","tps"); sub("milestones","ms"); sub("bills","bills");
+    unsubs.push(fs.collection("activity").orderBy("at","desc").limit(300).onSnapshot(snap=>{ const o={}; snap.docs.forEach(d=>o[d.id]=d.data()); S.act=o; render(); },()=>{}));
     unsubs.push(fs.doc("settings/calc").onSnapshot(snap=>{ S.calc=snap.exists?snap.data():null; S.loaded.calc=true; render(); }));
   });
 })();
