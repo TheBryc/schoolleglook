@@ -274,7 +274,7 @@ function sources(){const set=new Set(["Josh","Lucas","Elin","Logan Anderson","Ch
 const FIELD_LABELS={status:"status",owner:"owner",nextStep:"next step",nextDue:"next step due",askCO:"capital outlay role",askSupp:"$1.2M ask role",why:"why they matter",connection:"how we know them",fellowsLive:"Fellows who live here",fellowsSchool:"Fellows who attend school here",schoolsInDistrict:"schools",grades:"Fellows by grade",topSchools:"top schools"};
 function clip(t,n){ t=String(t||""); return t.length>n?t.slice(0,n-1)+"…":t; }
 function legName(id){ const l=S.legs[id]; return l?title(l):""; }
-async function logActivity(text,legId){ if(!S.db) return; try{ await S.db.collection("activity").doc().set({at:new Date().toISOString(),by:S.userName||"Someone",text,legId:legId||""}); }catch(_){} }
+async function logActivity(text,legId,extra){ if(!S.db) return; try{ await S.db.collection("activity").doc().set(Object.assign({at:new Date().toISOString(),by:S.userName||"Someone",text,legId:legId||"",kind:"other"},extra||{})); }catch(_){} }
 function ago(isoStr){ const d=new Date(isoStr); if(isNaN(d)) return ""; const m=Math.round((Date.now()-d)/60000); if(m<1) return "just now"; if(m<60) return m+" min ago"; const h=Math.round(m/60); if(h<24) return h+(h===1?" hour ago":" hours ago"); const dd=Math.round(h/24); if(dd<7) return dd+(dd===1?" day ago":" days ago"); return d.toLocaleDateString("en-US",{month:"short",day:"numeric"}); }
 function activityList(items){ return `<ul class="list">${items.map(a=>`<li><span style="flex:1"><strong>${esc(a.by)}</strong> ${esc(a.text)}${a.legId&&S.legs[a.legId]?` <a href="#" data-open="${esc(a.legId)}">Open</a>`:""}</span><span class="small muted" style="white-space:nowrap">${esc(ago(a.at))}</span></li>`).join("")}</ul>`; }
 function shrink(file){ return new Promise((res,rej)=>{ const img=new Image(); img.onload=()=>{ const n=240, c=document.createElement("canvas"); c.width=n; c.height=n; const k=Math.max(n/img.width,n/img.height), w=img.width*k, h=img.height*k; c.getContext("2d").drawImage(img,(n-w)/2,(n-h)/4,w,h); res(c.toDataURL("image/jpeg",.82)); URL.revokeObjectURL(img.src); }; img.onerror=rej; img.src=URL.createObjectURL(file); }); }
@@ -422,7 +422,10 @@ function calcMath(c){
   const constr=c.items.filter(i=>i.include).reduce((s,i)=>s+(Number(i.cost)||0),0);
   const plan=constr*c.planningPct, misc=constr*c.miscPct, total=constr+plan+misc, match=total*c.matchPct, state=total-match;
   const needTotal=c.target/(1-c.matchPct), needConstr=needTotal/(1+c.planningPct+c.miscPct), needMatch=needTotal-c.target;
-  return {constr,plan,misc,total,match,state,needTotal,needConstr,needMatch};
+  const esc_on=c.escrow!==false;
+  const escrow=t=>{ if(!esc_on||t<=0) return {up:0,yr:0,cap:0,years:0}; const up=t*.03, yr=t*.005, cap=Math.min(t*.10,1000000); return {up,yr,cap,years:Math.max(0,Math.ceil((cap-up)/yr))}; };
+  const e=escrow(total), en=escrow(needTotal);
+  return {constr,plan,misc,total,match,state,needTotal,needConstr,needMatch,e,en,esc_on};
 }
 function eligClass(e){ return /^No/.test(e)?"no":(/Likely$|^Likely$/.test(e)?"ok":"maybe"); }
 function vCalc(){
@@ -446,6 +449,11 @@ function vCalc(){
        <p id="gap" style="font-weight:700"></p>
        <dl id="out"></dl>
        <hr style="border:0;border-top:2px dotted var(--line);margin:14px 0">
+       <h3 style="font-size:19px">Maintenance escrow</h3>
+       <p class="small muted">State law makes BRYC open a separate savings account for major repairs on the project: 3% of the total project cost before bidding, then 0.5% a year until it reaches 10% (max $1M). It isn’t part of the project budget or the state ask. It’s extra cash BRYC sets aside.</p>
+       <label class="small" style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="escrowOn" ${calcData().escrow!==false?"checked":""} ${S.readOnly?"disabled":""}> Include escrow (leave on unless the project is confirmed exempt)</label>
+       <div id="escrowOut"></div>
+       <hr style="border:0;border-top:2px dotted var(--line);margin:14px 0">
        <h3 style="font-size:19px">To hit the target</h3>
        <dl id="need"></dl>
        <p class="small muted" style="margin-top:12px">Quotes must be real. Chris: lawmakers look at what they’re getting for the money, and capital outlay dollars can’t be moved to operating costs.</p>
@@ -455,7 +463,15 @@ function vCalc(){
 function updateCalcOut(){
   const out=$("#out"); if(!out) return; const c=calcData(); const m=calcMath(c);
   out.innerHTML=`<dt>Construction</dt><dd>${money(m.constr)}</dd><dt>Design (${Math.round(c.planningPct*100)}%)</dt><dd>${money(m.plan)}</dd><dt>Misc. (${Math.round(c.miscPct*100)}%)</dt><dd>${money(m.misc)}</dd><dt><strong>Total project</strong></dt><dd>${money(m.total)}</dd><dt>BRYC match (${Math.round(c.matchPct*100)}%)</dt><dd>${money(m.match)}</dd><dt><strong>State ask</strong></dt><dd class="big">${money(m.state)}</dd>`;
-  $("#need").innerHTML=`<dt>Construction quotes needed</dt><dd>${money(m.needConstr)}</dd><dt>Total project</dt><dd>${money(m.needTotal)}</dd><dt>BRYC match needed</dt><dd>${money(m.needMatch)}</dd>`;
+  $("#need").innerHTML=`<dt>Construction quotes needed</dt><dd>${money(m.needConstr)}</dd><dt>Total project</dt><dd>${money(m.needTotal)}</dd><dt>BRYC match needed</dt><dd>${money(m.needMatch)}</dd>${m.esc_on?`<dt>Escrow to open before bidding</dt><dd>${money(m.en.up)}</dd><dt><strong>BRYC cash up front</strong></dt><dd><strong>${money(m.needMatch+m.en.up)}</strong></dd>`:""}`;
+  const eo=$("#escrowOut"); if(eo) eo.innerHTML= !m.esc_on ? `<p class="small muted">Escrow is turned off. Only do this if Chris or FP&C confirm the project is exempt.</p>` : m.total<=0 ? `<p class="small muted">Enter quotes to see the escrow.</p>` : `<dl>
+     <dt>Open before bidding (3%)</dt><dd>${money(m.e.up)}</dd>
+     <dt>Add each year after (0.5%)</dt><dd>${money(m.e.yr)}</dd>
+     <dt>Until the balance reaches</dt><dd>${money(m.e.cap)}</dd>
+     <dt>Years of deposits</dt><dd>about ${m.e.years}</dd>
+     <dt>Keep the account open</dt><dd>25 years</dd>
+     <dt><strong>BRYC cash up front (match + escrow)</strong></dt><dd class="big" style="font-size:26px">${money(m.match+m.e.up)}</dd>
+     <dt>BRYC total over time (match + full escrow)</dt><dd>${money(m.match+m.e.cap)}</dd></dl>`;
   const pct=c.target>0?Math.min(100,m.state/c.target*100):0; const mt=$("#meter"); mt.firstElementChild.style.width=pct+"%"; mt.classList.toggle("over",m.state>c.target);
   $("#gap").textContent= m.state>=c.target? (m.state>c.target?`Over the target by ${money(m.state-c.target)}.`:"Right on target.") : `${money(c.target-m.state)} short of the ${money(c.target)} target.`;
 }
@@ -602,7 +618,7 @@ function openLog(legId){
     const data={legId:legId2,date,type:$("#lgType").value,who:$("#lgWho").value.trim(),topic:"",summary:$("#lgSum").value.trim(),followUp:$("#lgFu").value.trim(),owner:$("#lgOwn").value.trim(),due:$("#lgDue").value,done:false};
     const btn=$("#lgSave"); btn.disabled=true;
     const ok=await write(S.db.collection("touchpoints").doc(),data,"set"); btn.disabled=false;
-    if(ok){ toast(`Logged. +${TYPES[data.type]||1} points`); dlg.close(); logActivity(`logged a ${data.type.toLowerCase()} with ${legName(legId2)}${data.summary?": “"+clip(data.summary,120)+"”":""}`,legId2); } };
+    if(ok){ toast(`Logged. +${TYPES[data.type]||1} points`); dlg.close(); logActivity(`logged a ${data.type.toLowerCase()} with ${legName(legId2)}${data.summary?": “"+clip(data.summary,120)+"”":""}`,legId2,{kind:"touchpoint",type:data.type,legName:legName(legId2),date:data.date}); } };
 }
 async function importNums(file){
   let data; try{ data=JSON.parse(await file.text()); }catch(_){ toast("That file isn’t the District Lookup export."); return; }
@@ -639,7 +655,7 @@ function openAddLeg(){
 }
 const STARTER_TASKS=[
  {title:"Request eCORTS login (takes 1–3 business days)",owner:"Elin",due:"2026-10-19"},
- {title:"Confirm which legislator represents 460 N 11th and request their letter of support",owner:"Josh",due:"2026-10-21"},
+ {title:"Get Rep. Landry’s letter of support (House District 67 covers 460 N 11th; Senate District 14 is vacant)",owner:"Josh",due:"2026-10-23"},
  {title:"Get contractor quotes for each capital outlay item and enter them in the calculator",owner:"Josh",due:"2026-10-23"},
  {title:"Confirm the final capital outlay package",owner:"Josh, Elin",due:"2026-10-23"},
  {title:"Decide how much BRYC can commit to the 25% match",owner:"Lucas",due:"2026-10-23"},
@@ -647,7 +663,8 @@ const STARTER_TASKS=[
  {title:"Chris walks Sen. Foil through the package",owner:"Lucas",due:"2026-10-27"},
  {title:"Meg Duggar reviews the draft application",owner:"Lucas, Elin",due:"2026-10-28"},
  {title:"Write and submit the request (eCORTS + NGO form)",owner:"Elin",due:"2026-10-30"},
- {title:"Mail the letter of support to all five offices",owner:"Elin",due:"2026-10-30"},
+ {title:"Upload the letter of support in eCORTS and email it to the five legislative offices in the CORTS instructions (no paper copies)",owner:"Elin",due:"2026-10-30"},
+ {title:"Budget the maintenance escrow (3% of total project before bidding) into the match decision",owner:"Lucas",due:"2026-10-23"},
  {title:"Decide: “Capital Outlay” or “Both” on the NGO form",owner:"Lucas, Josh",due:"2026-10-12",done:true,doneBy:"Chris Broadwater",note:"Answered: “Both.” Chris confirmed in his Oct 12 reply to Lucas."}
 ];
 function mine(t){ const me=(S.userName||"").toLowerCase(); return me && String(t.owner||"").toLowerCase().split(/,|&| and /).map(x=>x.trim()).some(x=>x===me||x.startsWith(me)); }
@@ -726,12 +743,13 @@ dlg.addEventListener("click",e=>{ if(e.target===dlg) dlg.close(); });
 document.addEventListener("input",e=>{
   if(e.target.id==="q"){ S.q=e.target.value; const pos=e.target.selectionStart; doRender(); const q=$("#q"); q.focus(); q.setSelectionRange(pos,pos); return; }
   const ci=e.target.dataset&&e.target.dataset.ci; if(ci!=null){ calcLocal=JSON.parse(JSON.stringify(calcData())); const it=calcLocal.items[+ci]; if(e.target.dataset.cf==="include") it.include=e.target.checked; else it.cost=Math.max(0,Number(e.target.value)||0); updateCalcOut(); saveCalcSoon(); return; }
+  if(e.target.id==="escrowOn"){ calcLocal=JSON.parse(JSON.stringify(calcData())); calcLocal.escrow=e.target.checked; updateCalcOut(); saveCalcSoon(); return; }
   if(e.target.id==="target"){ calcLocal=JSON.parse(JSON.stringify(calcData())); calcLocal.target=Math.max(0,Number(e.target.value)||0); updateCalcOut(); saveCalcSoon(); }
 });
 document.addEventListener("change",async e=>{
   if(e.target.id==="sort"){ S.sort=e.target.value; render(); return; }
   const tk=e.target.dataset&&e.target.dataset.task; if(tk){ const x=S.tasks[tk]||{}; const done=e.target.checked;
-    if(await write(S.db.doc("tasks/"+tk),done?{done:true,doneBy:S.userName||"",doneAt:new Date().toISOString()}:{done:false,doneBy:"",doneAt:""},"update")){ toast(done?"Done":"Reopened"); logActivity(`${done?"completed":"reopened"} “${clip(x.title,100)}”`); } return; }
+    if(await write(S.db.doc("tasks/"+tk),done?{done:true,doneBy:S.userName||"",doneAt:new Date().toISOString()}:{done:false,doneBy:"",doneAt:""},"update")){ toast(done?"Done":"Reopened"); logActivity(`${done?"completed":"reopened"} “${clip(x.title,100)}”`,"",{kind:done?"task_done":"task_reopened",title:x.title||""}); } return; }
   if(e.target.id==="seedFile"){ const f=e.target.files[0]; e.target.value=""; if(f) importSeed(f); return; }
   if(e.target.id==="importNums"){ const f=e.target.files[0]; e.target.value=""; if(f) importNums(f); return; }
   const bf=e.target.dataset&&e.target.dataset.bf; if(bf){ const [id,k]=bf.split(":"); if(await write(S.db&&S.db.doc("bills/"+id),{[k]:e.target.value},"update")){ toast("Saved"); const b=S.bills[id]||{}; logActivity(`updated ${b.number||b.key||id}: ${k==="line"?"BRYC line item":k} to “${clip(e.target.value,60)}”`); } }
