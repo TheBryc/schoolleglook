@@ -294,7 +294,7 @@ let raf=0; function render(){ cancelAnimationFrame(raf); raf=requestAnimationFra
 function doRender(){
   document.querySelectorAll("nav.tabs button").forEach(b=>b.setAttribute("aria-current",b.dataset.tab===S.tab?"true":"false"));
   const m=$("#main");
-  if(S.tab==="calc"&&m.querySelector("#calcView")&&m.contains(document.activeElement)){ updateCalcOut(); return; }
+  if(S.tab==="calc"&&m.querySelector("#calcView")&&m.contains(document.activeElement)&&/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)){ updateCalcOut(); return; }
   const v={home:vHome,delegation:vDelegation,timeline:vTimeline,calc:vCalc,bills:vBills,how:vHow}[S.tab];
   m.innerHTML=v(); if(S.tab==="calc") updateCalcOut();
 }
@@ -436,14 +436,16 @@ function vCalc(){
     <td><span class="elig ${eligClass(i.eligibility)}">${esc(i.eligibility)}</span><br><span class="small">${esc(i.rule)}</span></td>
     <td class="small">${esc(i.proof)}</td>
     <td><input type="number" min="0" step="1000" inputmode="numeric" data-ci="${ix}" data-cf="cost" value="${Number(i.cost)||""}" placeholder="0" ${ro?"disabled":""} aria-label="Construction estimate for ${esc(i.name)}"></td>
+    ${!ro?`<td style="white-space:nowrap"><button class="btn ghost small" style="padding:2px 8px" data-cmove="${ix}:-1" aria-label="Move ${esc(i.name)} up" ${ix===0?"disabled":""}>↑</button> <button class="btn ghost small" style="padding:2px 8px" data-cmove="${ix}:1" aria-label="Move ${esc(i.name)} down" ${ix===c.items.length-1?"disabled":""}>↓</button> <button class="btn ghost small" style="padding:2px 10px" data-cedit="${ix}">Edit</button></td>`:""}
   </tr>`).join("");
   return `<section class="view" id="calcView">${banner()}
    <div class="section-head"><h2>Capital outlay calculator</h2></div>
    <p style="max-width:75ch">Type each item’s construction quote and tick what goes in the request. The math follows the state’s rules: eCORTS adds 10% for design and 10% for miscellaneous costs, and BRYC must cover at least 25% of the total project cost.</p>
    <div class="calc">
-     <div class="panel scroll-x"><table><thead><tr><th>In?</th><th>Item</th><th>Eligible?</th><th>What the state will want</th><th>Construction quote ($)</th></tr></thead><tbody>${rows||`<tr><td colspan="5">No items yet.</td></tr>`}</tbody></table>
-       ${!ro?`<div class="rowline" style="margin-top:14px"><input id="newItem" placeholder="Add an item" style="width:240px"><button class="btn ghost" id="addItem">Add item</button></div>`:""}</div>
+     <div class="panel scroll-x"><table><thead><tr><th>In?</th><th>Item</th><th>Eligible?</th><th>What the state will want</th><th>Construction quote ($)</th>${!ro?"<th></th>":""}</tr></thead><tbody>${rows||`<tr><td colspan="5">No items yet.</td></tr>`}</tbody></table>
+       ${!ro?`<div class="rowline" style="margin-top:14px"><input id="newItem" placeholder="Add an item" style="width:240px"><button class="btn ghost" id="addItem">Add item</button><button class="btn ghost" data-csettings>Edit percentages</button></div>`:""}</div>
      <div class="panel sum">
+       <p class="small muted" style="margin-top:0">Design ${Math.round(c.planningPct*100)}%, misc. ${Math.round(c.miscPct*100)}%, BRYC match ${Math.round(c.matchPct*100)}%.</p>
        <div class="rowline"><label for="target"><strong>Target state ask</strong></label><input type="number" id="target" step="10000" value="${c.target}" ${ro?"disabled":""}></div>
        <div class="meter" id="meter"><span></span></div>
        <p id="gap" style="font-weight:700"></p>
@@ -459,6 +461,49 @@ function vCalc(){
        <p class="small muted" style="margin-top:12px">Quotes must be real. Chris: lawmakers look at what they’re getting for the money, and capital outlay dollars can’t be moved to operating costs.</p>
      </div>
    </div></section>`;
+}
+const ELIG_OPTIONS=["Likely","Likely, with proof","Likely if major","Check","Disputed","Weak","No"];
+async function saveCalcNow(msg){ if(!S.db){ toast("Sign in to save changes."); return false; } clearTimeout(calcTimer); calcTimer=null;
+  const ok=await write(S.db.doc("settings/calc"),JSON.parse(JSON.stringify(calcLocal)),"set"); if(ok){ S.calc=JSON.parse(JSON.stringify(calcLocal)); calcLocal=null; toast("Saved"); if(msg) logActivity(msg); } return ok; }
+function openCalcItem(ix){
+  const c=calcData(), i=c.items[ix]; if(!i) return;
+  body.innerHTML=`<div class="dlg-head"><h2 style="font-size:30px">Edit item</h2><button class="btn ghost close" data-close>Close</button></div>
+  <div class="fields">
+   <label class="f full">Item<input id="ciName" value="${esc(i.name)}"></label>
+   <label class="f">Eligible?<input id="ciElig" list="eligList" value="${esc(i.eligibility)}" placeholder="Pick or type your own"></label>
+   <datalist id="eligList">${ELIG_OPTIONS.map(o=>`<option value="${esc(o)}">`).join("")}</datalist>
+   <label class="f">Construction quote ($)<input id="ciCost" type="number" min="0" step="1000" value="${Number(i.cost)||""}"></label>
+   <label class="f full">Rule it hits<textarea id="ciRule">${esc(i.rule)}</textarea></label>
+   <label class="f full">What the state will want<textarea id="ciProof">${esc(i.proof)}</textarea></label>
+   <label class="f full">Note<textarea id="ciNote">${esc(i.note)}</textarea></label>
+   <label class="f full" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="ciInc" ${i.include?"checked":""} style="width:22px;height:22px"> Include in the request</label>
+  </div>
+  <p class="small muted" style="margin-top:8px">Eligibility labels starting with “No” show red, “Likely” shows green, and anything else shows yellow.</p>
+  <p style="margin-top:16px;display:flex;gap:10px"><button class="btn" id="ciSave">Save</button><button class="btn red" id="ciDel">Delete item</button></p>`;
+  if(!dlg.open) dlg.showModal();
+  $("#ciSave").onclick=async()=>{ const name=$("#ciName").value.trim(); if(!name){ toast("Give the item a name."); return; }
+    calcLocal=JSON.parse(JSON.stringify(calcData())); Object.assign(calcLocal.items[ix],{name,eligibility:$("#ciElig").value.trim()||"Check",cost:Math.max(0,Number($("#ciCost").value)||0),rule:$("#ciRule").value.trim(),proof:$("#ciProof").value.trim(),note:$("#ciNote").value.trim(),include:$("#ciInc").checked});
+    if(await saveCalcNow(`edited the calculator item “${clip(name,60)}”`)){ dlg.close(); doRender(); } };
+  $("#ciDel").onclick=async()=>{ if(!confirm(`Delete “${i.name}” from the calculator?`)) return;
+    calcLocal=JSON.parse(JSON.stringify(calcData())); calcLocal.items.splice(ix,1);
+    if(await saveCalcNow(`removed “${clip(i.name,60)}” from the calculator`)){ dlg.close(); doRender(); } };
+}
+function openCalcSettings(){
+  const c=calcData(); const pct=v=>Math.round((Number(v)||0)*1000)/10;
+  body.innerHTML=`<div class="dlg-head"><h2 style="font-size:30px">Edit percentages</h2><button class="btn ghost close" data-close>Close</button></div>
+  <p class="small muted">eCORTS fills in design and misc. at 10% of construction, and state law requires at least a 25% match. Only change these if Chris or Facility Planning tells you to.</p>
+  <div class="fields">
+   <label class="f">Design / planning (%)<input id="csPlan" type="number" min="0" max="100" step="0.5" value="${pct(c.planningPct)}"></label>
+   <label class="f">Misc. / contingency (%)<input id="csMisc" type="number" min="0" max="100" step="0.5" value="${pct(c.miscPct)}"></label>
+   <label class="f">BRYC match (%)<input id="csMatch" type="number" min="0" max="99" step="0.5" value="${pct(c.matchPct)}"></label>
+  </div>
+  <p style="margin-top:16px;display:flex;gap:10px"><button class="btn" id="csSave">Save</button><button class="btn ghost" id="csReset">Reset to 10 / 10 / 25</button></p>`;
+  if(!dlg.open) dlg.showModal();
+  const save=async(pl,mi,ma)=>{ calcLocal=JSON.parse(JSON.stringify(calcData())); Object.assign(calcLocal,{planningPct:pl/100,miscPct:mi/100,matchPct:ma/100});
+    if(await saveCalcNow(`set calculator percentages to design ${pl}%, misc. ${mi}%, match ${ma}%`)){ dlg.close(); doRender(); } };
+  $("#csSave").onclick=()=>{ const pl=+$("#csPlan").value, mi=+$("#csMisc").value, ma=+$("#csMatch").value;
+    if([pl,mi,ma].some(v=>!isFinite(v)||v<0)||ma>=100){ toast("Check the numbers."); return; } save(pl,mi,ma); };
+  $("#csReset").onclick=()=>save(10,10,25);
 }
 function updateCalcOut(){
   const out=$("#out"); if(!out) return; const c=calcData(); const m=calcMath(c);
@@ -737,7 +782,10 @@ document.addEventListener("click",async e=>{
   if(e.target.closest("[data-signin]")){ signIn(); return; }
   if(e.target.closest("[data-signout]")){ firebase.auth().signOut(); return; }
   const dm=e.target.closest("[data-delms]"); if(dm){ if(!confirm("Remove this date from the timeline?")) return; try{ const m=S.ms[dm.dataset.delms]||{}; await S.db.doc("milestones/"+dm.dataset.delms).delete(); toast("Removed"); logActivity("removed “"+clip(m.title,80)+"” from the timeline"); }catch(_){ toast("Couldn’t remove it."); } return; }
-  if(e.target.id==="addItem"){ const n=$("#newItem").value.trim(); if(!n) return; calcLocal=JSON.parse(JSON.stringify(calcData())); calcLocal.items.push({id:"u"+Date.now(),name:n,eligibility:"Check",rule:"Confirm with Chris or FP&C",proof:"",cost:0,include:true,note:""}); doRender(); saveCalcSoon(); return; }
+  const ce=e.target.closest("[data-cedit]"); if(ce){ openCalcItem(+ce.dataset.cedit); return; }
+  if(e.target.closest("[data-csettings]")){ openCalcSettings(); return; }
+  const cm=e.target.closest("[data-cmove]"); if(cm){ const [ix,d]=cm.dataset.cmove.split(":").map(Number); calcLocal=JSON.parse(JSON.stringify(calcData())); const a=calcLocal.items, j=ix+d; if(j<0||j>=a.length) return; [a[ix],a[j]]=[a[j],a[ix]]; doRender(); await saveCalcNow(""); return; }
+  if(e.target.id==="addItem"){ const n=$("#newItem").value.trim(); if(!n) return; calcLocal=JSON.parse(JSON.stringify(calcData())); calcLocal.items.push({id:"u"+Date.now(),name:n,eligibility:"Check",rule:"Confirm with Chris or FP&C",proof:"",cost:0,include:true,note:""}); const nix=calcLocal.items.length-1; await saveCalcNow(`added “${clip(n,60)}” to the calculator`); doRender(); openCalcItem(nix); return; }
 });
 dlg.addEventListener("click",e=>{ if(e.target===dlg) dlg.close(); });
 document.addEventListener("input",e=>{
