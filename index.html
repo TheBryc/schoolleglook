@@ -40,7 +40,7 @@ input[type=search]:focus,select:focus,button:focus-visible,summary:focus-visible
 button{font:inherit;font-weight:600;border:0;border-radius:6px;padding:9px 14px;background:var(--navy);color:#fff;cursor:pointer;white-space:nowrap}
 button.quiet{background:var(--wash);color:var(--navy);border:1px solid var(--line);font-weight:500;padding:6px 10px;font-size:13px}
 button:disabled{opacity:.5;cursor:default}
-.pickers{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px}
+.pickers{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:6px}
 .pickers label{font-size:13px;color:var(--muted);display:block}
 .hint{font-size:13px;color:var(--muted);margin:2px 0 14px}
 #panel{border-top:1px solid var(--line);padding-top:14px}
@@ -48,6 +48,7 @@ button:disabled{opacity:.5;cursor:default}
 .hero{display:flex;align-items:flex-end;gap:14px;margin:4px 0 12px}
 .hero .num{font-family:var(--cond);font-weight:700;font-size:76px;line-height:.82;color:var(--navy)}
 .hero .num.senate{color:var(--green)}
+.hero .num.council{color:#A23B72}
 .hero .who{padding-bottom:4px}
 .hero .chamber{font-family:var(--cond);font-weight:600;font-size:20px;line-height:1.1}
 .hero .name{font-size:15px}
@@ -87,6 +88,8 @@ main{position:relative;min-height:0}
 .sw{display:inline-block;width:18px;height:0;border-top:2px solid}
 .sw.house{border-color:var(--navy)}
 .sw.senate{border-top:3px dashed var(--green)}
+.sw.council{border-top:3px solid #A23B72}
+.dlabel.c{color:#A23B72;font-size:14px}
 .sw.prec{border-color:#8A90A6;border-top-width:1px}
 .sw.zip{border-top:2px dotted #A0522D}
 .dlabel.z{color:#A0522D;font-size:12px;font-weight:600}
@@ -130,6 +133,7 @@ main{position:relative;min-height:0}
     <div class="pickers">
       <div><label for="pickHouse">House district report</label><select id="pickHouse"><option value="">Choose…</option></select></div>
       <div><label for="pickSenate">Senate district report</label><select id="pickSenate"><option value="">Choose…</option></select></div>
+      <div><label for="pickCouncil">Metro Council report</label><select id="pickCouncil"><option value="">Choose…</option></select></div>
     </div>
     <p class="hint">Or click anywhere on the map to see which districts cover that spot.</p>
 
@@ -166,6 +170,7 @@ main{position:relative;min-height:0}
   <div class="layers" id="layers">
     <label><input type="checkbox" data-layer="house" checked><span class="sw house"></span>House districts</label>
     <label><input type="checkbox" data-layer="senate"><span class="sw senate"></span>Senate districts</label>
+    <label><input type="checkbox" data-layer="council"><span class="sw council"></span>Metro Council districts</label>
     <label><input type="checkbox" data-layer="precincts"><span class="sw prec"></span>Voting precincts</label>
     <label><input type="checkbox" data-layer="zips"><span class="sw zip"></span>ZIP codes</label>
     <label><input type="checkbox" data-layer="schoolsPub" checked><span class="dot pub"></span>Public, grades 8–12</label>
@@ -198,6 +203,7 @@ const SOURCES = {
   house:{label:'State House districts (Census Bureau, 2024 lines)', file:'house.geojson', live:tigerUrl(2)},
   senate:{label:'State Senate districts (Census Bureau, 2024 lines)', file:'senate.geojson', live:tigerUrl(1)},
   zips:{label:'ZIP code areas (Census Bureau, 2020)', file:'zips.geojson', live:zctaUrl()},
+  council:{label:'Metro Council districts (City-Parish open data)', file:'council.geojson', live:'https://data.brla.gov/resource/xqij-9yqb.geojson?$limit=100'},
   legislators:{label:'Legislators (repo list from legis.la.gov; Open States as backup)', file:'legislators.csv', live:'https://data.openstates.org/people/current/la.csv', csv:true}
 };
 
@@ -209,7 +215,7 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const status = msg => { $('status').textContent = msg || ''; };
 const cnt = n => n;
-const CH = {lower:{key:'house', title:'House District', short:'HD'}, upper:{key:'senate', title:'Senate District', short:'SD'}};
+const CH = {lower:{key:'house', title:'House District', short:'HD'}, upper:{key:'senate', title:'Senate District', short:'SD'}, council:{key:'council', title:'Metro Council District', short:'MC'}};
 
 /* ===== Geometry ===== */
 function bboxOf(g){
@@ -244,7 +250,7 @@ function interiorPoint(f){
   for(let i=0;i<n;i++){ const j=(i+Math.floor(n/2))%n; const m=[(r[i][0]+r[j][0])/2,(r[i][1]+r[j][1])/2]; if(polyHas(m[0],m[1],best)) return m; }
   return r[0];
 }
-function distNum(p){ const v = p.BASENAME ?? p.SLDL ?? p.SLDU ?? p.NAME ?? p.district ?? ''; const m=String(v).match(/\d+/); return m ? parseInt(m[0],10) : null; }
+function distNum(p){ const v = p.BASENAME ?? p.SLDL ?? p.SLDU ?? p.district ?? p.DISTRICT ?? p.council_district ?? p.district_number ?? p.NAME ?? (Object.entries(p).find(([k,val])=>/dist/i.test(k) && /\d/.test(String(val)))||[])[1] ?? ''; const m=String(v).match(/\d+/); return m ? parseInt(m[0],10) : null; }
 
 /* ===== Schools ===== */
 /* Fixes from cross-checking the City-Parish school list against Red Stick Schools Guide (Oct 2026).
@@ -400,7 +406,12 @@ function officialLink(ch,d){
   if(ch==='lower') return `https://house.louisiana.gov/H_Reps/members?ID=${d}`;
   return `https://senate.la.gov/smembers?ID=${d}`;
 }
-function legName(ch,d){ const l=S.legis[ch][d]; return l ? l.name : 'Legislator not loaded'; }
+function councilName(d){
+  const f=S.data.council && S.data.council.features.find(x=>x._num===d); if(!f) return '';
+  const p=f.properties||{}; const k=Object.keys(p).find(k=>/member|councilm|represent|official/i.test(k));
+  return k && p[k] ? String(p[k]) : '';
+}
+function legName(ch,d){ if(ch==='council') return councilName(d) || 'Council member not listed in city data'; const l=S.legis[ch][d]; return l ? l.name : 'Legislator not loaded'; }
 
 async function loadAll(liveOnly=false){
   status('Loading map data…');
@@ -422,16 +433,16 @@ async function loadAll(liveOnly=false){
 
 function prepare(){
   const P=S.data.precincts;
-  ['precincts','house','senate'].forEach(k=>{
+  ['precincts','house','senate','council'].forEach(k=>{
     const fc=S.data[k]; if(!fc) return;
     fc.features=fc.features.filter(f=>f.geometry);
     fc.features.forEach(f=>{ f._bbox=bboxOf(f.geometry); f._pt=interiorPoint(f); if(k!=='precincts') f._num=distNum(f.properties||{}); });
   });
   if(P){
     P.features.forEach(f=>{ const p=f.properties||{}; f._name = p.voting_precinct_name || p.VOTING_PRECINCT || p.name || '?'; });
-    ['house','senate'].forEach(k=>{
+    ['house','senate','council'].forEach(k=>{
       const fc=S.data[k]; if(!fc) return;
-      fc.features=fc.features.filter(d=>P.features.some(pr=>pr._pt && featHas(d,pr._pt[0],pr._pt[1])));
+      if(k!=='council') fc.features=fc.features.filter(d=>P.features.some(pr=>pr._pt && featHas(d,pr._pt[0],pr._pt[1])));
       P.features.forEach(pr=>{ const d=pr._pt && findIn(fc,pr._pt[0],pr._pt[1]); pr['_'+k]=d?d._num:null; });
     });
   }
@@ -450,6 +461,7 @@ function prepare(){
       f._pub=String(p.public_private||'').toLowerCase().startsWith('pub');
       f._house=(findIn(S.data.house,x,y)||{})._num ?? null;
       f._senate=(findIn(S.data.senate,x,y)||{})._num ?? null;
+      f._council=(findIn(S.data.council,x,y)||{})._num ?? null;
       f._precinct=(findIn(P,x,y)||{})._name ?? null;
     });
   }
@@ -473,6 +485,7 @@ function draw(){
   LY.precincts=L.geoJSON(S.data.precincts||[],{interactive:false, style:{color:'#8A90A6',weight:.7,fill:false}});
   LY.house=L.layerGroup([L.geoJSON(S.data.house||[],{interactive:false, style:{color:'#26245E',weight:2,fill:false}}), labelLayer(S.data.house,'h','H')]);
   LY.senate=L.layerGroup([L.geoJSON(S.data.senate||[],{interactive:false, style:{color:'#0F6B5C',weight:3,dashArray:'7 6',fill:false}}), labelLayer(S.data.senate,'s','S')]);
+  LY.council=L.layerGroup([L.geoJSON(S.data.council||[],{interactive:false, style:{color:'#A23B72',weight:2.5,dashArray:'1 5',fill:false}}), labelLayer(S.data.council,'c','MC')]);
   LY.zips=L.layerGroup([L.geoJSON(S.data.zips||[],{interactive:false, style:{color:'#A0522D',weight:1.5,dashArray:'2 4',fill:false}}),
     (()=>{ const g=L.layerGroup(); (S.data.zips?S.data.zips.features:[]).forEach(f=>{ if(f._pt&&f._zip) L.marker([f._pt[1],f._pt[0]],{interactive:false,keyboard:false,icon:L.divIcon({className:'dlabel z',html:f._zip,iconSize:null})}).addTo(g); }); return g; })()]);
   LY.schoolsPub=L.layerGroup(); LY.schoolsPriv=L.layerGroup();
@@ -511,14 +524,14 @@ function schoolPopup(f){
 function highlight(feature, ch){
   if(S.highlight) map.removeLayer(S.highlight);
   if(!feature){ S.highlight=null; return; }
-  const c = ch==='upper' ? '#0F6B5C' : '#26245E';
+  const c = ch==='upper' ? '#0F6B5C' : ch==='council' ? '#A23B72' : '#26245E';
   S.highlight=L.geoJSON(feature,{interactive:false, style:{color:c,weight:4,fillColor:c,fillOpacity:.08}}).addTo(map);
   map.fitBounds(S.highlight.getBounds(),{padding:[30,30]});
 }
 
 /* ===== Pickers ===== */
 function fillPickers(){
-  [['lower','pickHouse','house'],['upper','pickSenate','senate']].forEach(([ch,id,k])=>{
+  [['lower','pickHouse','house'],['upper','pickSenate','senate'],['council','pickCouncil','council']].forEach(([ch,id,k])=>{
     const sel=$(id); sel.length=1;
     (S.data[k]?S.data[k].features:[]).map(f=>f._num).filter(Boolean).sort((a,b)=>a-b)
       .forEach(n=>{ const o=document.createElement('option'); o.value=n; o.textContent=`${n} — ${legName(ch,n)}`; sel.appendChild(o); });
@@ -526,6 +539,7 @@ function fillPickers(){
 }
 $('pickHouse').addEventListener('change',e=>{ if(e.target.value) districtReport('lower',+e.target.value); });
 $('pickSenate').addEventListener('change',e=>{ if(e.target.value) districtReport('upper',+e.target.value); });
+$('pickCouncil').addEventListener('change',e=>{ if(e.target.value) districtReport('council',+e.target.value); });
 
 /* ===== Search ===== */
 $('searchForm').addEventListener('submit', async e=>{
@@ -557,10 +571,10 @@ function lookup(lat,lon,label){
   if(searchPin) map.removeLayer(searchPin);
   searchPin=L.marker([lat,lon]).addTo(map);
   highlight(null);
-  $('pickHouse').value=''; $('pickSenate').value='';
+  $('pickHouse').value=''; $('pickSenate').value=''; $('pickCouncil').value='';
   map.setView([lat,lon], Math.max(map.getZoom(),13));
-  const pr=findIn(S.data.precincts,lon,lat), hd=findIn(S.data.house,lon,lat), sd=findIn(S.data.senate,lon,lat);
-  const hn=hd&&hd._num, sn=sd&&sd._num;
+  const pr=findIn(S.data.precincts,lon,lat), hd=findIn(S.data.house,lon,lat), sd=findIn(S.data.senate,lon,lat), cd=findIn(S.data.council,lon,lat);
+  const hn=hd&&hd._num, sn=sd&&sd._num, cn=cd&&cd._num, fC = cn ? S.fellows.filter(f=>f.council===cn).length : 0;
   const fH = hn ? S.fellows.filter(f=>f.house===hn).length : 0, fS = sn ? S.fellows.filter(f=>f.senate===sn).length : 0;
   $('panel').innerHTML=`<div class="lookup">
     <h2>${esc(label)}</h2>
@@ -568,15 +582,18 @@ function lookup(lat,lon,label){
       <dt>Precinct</dt><dd>${pr?esc(pr._name):'Outside East Baton Rouge precincts'}</dd>
       <dt>House</dt><dd>${hn?`District ${hn}: <a href="${esc(officialLink('lower',hn))}" target="_blank" rel="noopener">${esc(legName('lower',hn))}</a>`:'Not in a mapped district'}${S.fellows.length&&hn?` <span class="note">(${cnt(fH)} Fellows live in this district)</span>`:''}</dd>
       <dt>Senate</dt><dd>${sn?`District ${sn}: <a href="${esc(officialLink('upper',sn))}" target="_blank" rel="noopener">${esc(legName('upper',sn))}</a>`:'Not in a mapped district'}${S.fellows.length&&sn?` <span class="note">(${cnt(fS)} Fellows live in this district)</span>`:''}</dd>
+      <dt>Metro Council</dt><dd>${cn?`District ${cn}${councilName(cn)?': '+esc(councilName(cn)):''}`:'Not in a Metro Council district'}${S.fellows.length&&cn?` <span class="note">(${cnt(fC)} Fellows live in this district)</span>`:''}</dd>
     </dl>
     <div class="row">
       ${hn?`<button type="button" id="goH">House ${hn} report</button>`:''}
       ${sn?`<button type="button" id="goS">Senate ${sn} report</button>`:''}
+      ${cn?`<button type="button" id="goC">Council ${cn} report</button>`:''}
     </div>
     <p class="note">Address matching uses OpenStreetMap and can land a few doors off. If a home sits right on a district line, confirm with the Secretary of State's voter portal.</p>
   </div>`;
   if(hn) $('goH').onclick=()=>districtReport('lower',hn);
   if(sn) $('goS').onclick=()=>districtReport('upper',sn);
+  if(cn) $('goC').onclick=()=>districtReport('council',cn);
 }
 
 /* ===== Reports ===== */
@@ -613,7 +630,7 @@ function districtReport(ch,num){
   const feat=fc && fc.features.find(f=>f._num===num);
   if(!feat){ $('panel').innerHTML=`<p class="warn">${meta.title} ${num} is not loaded.</p>`; return; }
   highlight(feat,ch);
-  $('pickHouse').value = ch==='lower'?num:''; $('pickSenate').value = ch==='upper'?num:'';
+  $('pickHouse').value = ch==='lower'?num:''; $('pickSenate').value = ch==='upper'?num:''; $('pickCouncil').value = ch==='council'?num:'';
   const key='_'+meta.key;
   const schools=(S.data.schools?S.data.schools.features:[]).filter(f=>f[key]===num).sort((a,b)=>a.properties.name.localeCompare(b.properties.name));
   const precincts=(S.data.precincts?S.data.precincts.features:[]).filter(f=>f[key]===num).map(f=>f._name).sort();
@@ -648,9 +665,9 @@ function districtReport(ch,num){
 
   const enrolledHere = has ? S.fellows.filter(x=>x.schoolId && x.schoolId[key]===num).length : 0;
   $('panel').innerHTML=`
-    <div class="hero"><div class="num ${ch==='upper'?'senate':''}">${num}</div>
+    <div class="hero"><div class="num ${ch==='upper'?'senate':ch==='council'?'council':''}">${num}</div>
       <div class="who"><div class="chamber">${meta.title}</div>
-      <div class="name"><a href="${esc(officialLink(ch,num))}" target="_blank" rel="noopener">${esc(legName(ch,num))}</a></div></div></div>
+      <div class="name">${ch==='council' ? esc(legName(ch,num)) : `<a href="${esc(officialLink(ch,num))}" target="_blank" rel="noopener">${esc(legName(ch,num))}</a>`}</div></div></div>
     <div class="facts">
       <div><b>${has?cnt(living.length):'—'}</b><span>Fellows live here</span></div>
       <div><b>${has?cnt(enrolledHere):'—'}</b><span>Fellows attend school here</span></div>
@@ -738,11 +755,12 @@ function buildFellows(sheet){
 }
 
 function assignFellows(){
-  const H=S.data.house, Sn=S.data.senate;
+  const H=S.data.house, Sn=S.data.senate, Cn=S.data.council;
   const unmatched=new Set();
   S.fellows.forEach(f=>{
     f.house = f.lat!=null ? ((findIn(H,f.lon,f.lat)||{})._num ?? null) : null;
     f.senate = f.lat!=null ? ((findIn(Sn,f.lon,f.lat)||{})._num ?? null) : null;
+    f.council = f.lat!=null ? ((findIn(Cn,f.lon,f.lat)||{})._num ?? null) : null;
     f.schoolId = f.school ? matchSchool(f.school) : null;
     if(f.school && !f.schoolId) unmatched.add(f.school);
   });
@@ -770,10 +788,10 @@ function computeZipShares(){
   const zips=[...new Set(S.fellows.filter(f=>f.zipOnly).map(f=>f.zip5))];
   for(const z of zips){
     const exact=S.fellows.filter(f=>f.lat!=null && String(f.zip||'').includes(z));
-    const out={house:{}, senate:{}, method:null, n:0};
+    const out={house:{}, senate:{}, council:{}, method:null, n:0};
     if(exact.length>=5){
       out.method='Fellows'; out.n=exact.length;
-      exact.forEach(f=>{ if(f.house) out.house[f.house]=(out.house[f.house]||0)+1/exact.length; if(f.senate) out.senate[f.senate]=(out.senate[f.senate]||0)+1/exact.length; });
+      exact.forEach(f=>{ if(f.house) out.house[f.house]=(out.house[f.house]||0)+1/exact.length; if(f.senate) out.senate[f.senate]=(out.senate[f.senate]||0)+1/exact.length; if(f.council) out.council[f.council]=(out.council[f.council]||0)+1/exact.length; });
     } else {
       const zf=S.data.zips && S.data.zips.features.find(f=>f._zip===z);
       if(zf){
@@ -782,9 +800,10 @@ function computeZipShares(){
           const x=w+(e-w)*(i+.5)/N, y=so+(n-so)*(j+.5)/N;
           if(!featHas(zf,x,y)) continue; inside++;
           const h=findIn(S.data.house,x,y), sd=findIn(S.data.senate,x,y);
-          if(h) out.house[h._num]=(out.house[h._num]||0)+1; if(sd) out.senate[sd._num]=(out.senate[sd._num]||0)+1;
+          const cd=findIn(S.data.council,x,y);
+          if(h) out.house[h._num]=(out.house[h._num]||0)+1; if(sd) out.senate[sd._num]=(out.senate[sd._num]||0)+1; if(cd) out.council[cd._num]=(out.council[cd._num]||0)+1;
         }
-        if(inside){ out.method='area'; out.n=inside; ['house','senate'].forEach(k=>Object.keys(out[k]).forEach(d=>out[k][d]/=inside)); }
+        if(inside){ out.method='area'; out.n=inside; ['house','senate','council'].forEach(k=>Object.keys(out[k]).forEach(d=>out[k][d]/=inside)); }
       }
     }
     S.zipShares[z]=out;
@@ -801,14 +820,14 @@ function districtNumbers(ch,num){
   const grades=S.roster&&S.roster.map.grade ? groupCount(living,f=>f.grade||'not listed').sort((a,b)=>String(a[0]).localeCompare(String(b[0]),undefined,{numeric:true})).map(([g,c])=>`${g}: ${cnt(c)}`).join(', ') : '';
   let zipEst=0;
   groupCount(S.fellows.filter(f=>f.zipOnly),f=>f.zip5).forEach(([z,n])=>{ const share=((S.zipShares[z]||{})[meta.key]||{})[num]||0; zipEst+=n*share; });
-  return {chamber: ch==='upper'?'Senate':'House', district:String(num), legislator:legName(ch,num),
+  return {chamber: ch==='upper'?'Senate':ch==='council'?'Metro Council':'House', district:String(num), legislator:legName(ch,num),
     fellowsLive:String(cnt(living.length)), fellowsSchool:String(cnt(enrolled)), schoolsInDistrict:String(schools),
     topSchools:top, grades, zipEstimate:Math.round(zipEst)};
 }
 $('exportAll').addEventListener('click',()=>{
   if(!S.fellows.length){ alert('Load the Fellow roster first.'); return; }
   const rows=[];
-  [['lower','house'],['upper','senate']].forEach(([ch,k])=>(S.data[k]?S.data[k].features:[]).map(f=>f._num).filter(Boolean).sort((a,b)=>a-b).forEach(n=>rows.push(districtNumbers(ch,n))));
+  [['lower','house'],['upper','senate'],['council','council']].forEach(([ch,k])=>(S.data[k]?S.data[k].features:[]).map(f=>f._num).filter(Boolean).sort((a,b)=>a-b).forEach(n=>rows.push(districtNumbers(ch,n))));
   const out={source:'BRYC District Lookup', generated:new Date().toISOString(), roster:S.roster?S.roster.name:'', rows};
   download('bryc-district-numbers.json', JSON.stringify(out,null,1), 'application/json');
 });
