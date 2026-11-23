@@ -109,8 +109,23 @@ main{position:relative;min-height:0}
   aside{border-right:0}
   .scroll{overflow:visible}
 }
+.sum-head{margin:0 0 10px}
+.sum-head h2{margin:0 0 2px;font-size:20px}
+.sum-head p{margin:0;color:var(--muted);font-size:12.5px}
+.sumtbl td.bar{min-width:110px}
+.sumtbl .b{display:flex;align-items:center;gap:6px}
+.sumtbl .b i{display:block;height:9px;border-radius:2px;background:#A23B72;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.sumtbl .b span{font-variant-numeric:tabular-nums;min-width:2.2em;text-align:right}
+.sumtbl tr.tot td{font-weight:600;border-top:2px solid var(--ink,#222);border-bottom:0}
+.sumtbl td.top{font-size:12.5px;color:var(--muted)}
 @media print{
   main,form.search,.pickers,.hint,details,.acts,.stripes{display:none!important}
+  body.print-summary header,body.print-summary .noprint{display:none!important}
+  body.print-summary .note{font-size:10.5px;margin:6px 0}
+  body.print-summary .sum-head h2{font-size:17px}
+  body.print-summary aside{width:auto;max-width:none}
+  body.print-summary table{font-size:11px;line-height:1.3}
+  body.print-summary th,body.print-summary td{padding:3px 6px}
   .app{display:block}
   .scroll{overflow:visible}
 }
@@ -150,6 +165,7 @@ main{position:relative;min-height:0}
         <div id="exportBox" style="display:none;margin-top:10px">
           <p class="note">One file with Fellow numbers for every House and Senate district, ready to import into the BRYC at the Capitol tracker. It holds counts only, no names or addresses.</p>
           <button type="button" id="exportAll">Export all districts for the tracker</button>
+          <p style="margin-top:8px"><button type="button" class="quiet" id="councilSummaryBtn">Metro Council summary (print)</button></p>
         </div>
       </div>
     </details>
@@ -535,11 +551,12 @@ function fillPickers(){
     const sel=$(id); sel.length=1;
     (S.data[k]?S.data[k].features:[]).map(f=>f._num).filter(Boolean).sort((a,b)=>a-b)
       .forEach(n=>{ const o=document.createElement('option'); o.value=n; o.textContent=`${n} — ${legName(ch,n)}`; sel.appendChild(o); });
+    if(ch==='council' && S.data.council && S.data.council.features.length){ const o=document.createElement('option'); o.value='all'; o.textContent='All districts (printable summary)'; sel.insertBefore(o, sel.options[1]); }
   });
 }
 $('pickHouse').addEventListener('change',e=>{ if(e.target.value) districtReport('lower',+e.target.value); });
 $('pickSenate').addEventListener('change',e=>{ if(e.target.value) districtReport('upper',+e.target.value); });
-$('pickCouncil').addEventListener('change',e=>{ if(e.target.value) districtReport('council',+e.target.value); });
+$('pickCouncil').addEventListener('change',e=>{ const v=e.target.value; if(v==='all') councilSummary(); else if(v) districtReport('council',+v); });
 
 /* ===== Search ===== */
 $('searchForm').addEventListener('submit', async e=>{
@@ -568,6 +585,7 @@ $('searchForm').addEventListener('submit', async e=>{
 map.on('click', e=>lookup(e.latlng.lat, e.latlng.lng, 'Point on map'));
 
 function lookup(lat,lon,label){
+  document.body.classList.remove('print-summary'); setPageSize('');
   if(searchPin) map.removeLayer(searchPin);
   searchPin=L.marker([lat,lon]).addTo(map);
   highlight(null);
@@ -626,6 +644,7 @@ function download(name,text,type){
 function groupCount(items,keyFn){ const m=new Map(); items.forEach(x=>{ const k=keyFn(x); m.set(k,(m.get(k)||0)+1); }); return [...m.entries()].sort((a,b)=>b[1]-a[1]||String(a[0]).localeCompare(String(b[0]))); }
 
 function districtReport(ch,num){
+  document.body.classList.remove('print-summary'); setPageSize('');
   const meta=CH[ch], fc=S.data[meta.key];
   const feat=fc && fc.features.find(f=>f._num===num);
   if(!feat){ $('panel').innerHTML=`<p class="warn">${meta.title} ${num} is not loaded.</p>`; return; }
@@ -824,6 +843,60 @@ function districtNumbers(ch,num){
     fellowsLive:String(cnt(living.length)), fellowsSchool:String(cnt(enrolled)), schoolsInDistrict:String(schools),
     topSchools:top, grades, zipEstimate:Math.round(zipEst)};
 }
+function setPageSize(size){
+  let st=document.getElementById('pageSize');
+  if(!size){ if(st) st.remove(); return; }
+  if(!st){ st=document.createElement('style'); st.id='pageSize'; document.head.appendChild(st); }
+  st.textContent=`@page{size:${size};margin:0.5in}`;
+}
+function councilSummary(){
+  const fc=S.data.council;
+  if(!fc || !fc.features.length){ $('panel').innerHTML='<p class="warn">Metro Council districts did not load. Check Data sources below.</p>'; return; }
+  highlight(null); if(searchPin){ map.removeLayer(searchPin); searchPin=null; }
+  $('pickHouse').value=''; $('pickSenate').value=''; $('pickCouncil').value='all';
+  const has=S.fellows.length>0;
+  const nums=fc.features.map(f=>f._num).filter(Boolean).sort((a,b)=>a-b);
+  const rows=nums.map(n=>districtNumbers('council',n));
+  const live=rows.map(r=>has?S.fellows.filter(f=>f.council===+r.district).length:0);
+  const max=Math.max(1,...live);
+  const totLive=live.reduce((a,b)=>a+b,0);
+  const totSchool=has?S.fellows.filter(f=>f.schoolId && f.schoolId._council).length:0;
+  const totSchools=rows.reduce((a,r)=>a+(+r.schoolsInDistrict||0),0);
+  const zipTot=rows.reduce((a,r)=>a+(r.zipEstimate||0),0);
+  const mapped=has?S.fellows.filter(f=>f.lat!=null).length:0;
+  const outside=has?S.fellows.filter(f=>f.lat!=null && !f.council).length:0;
+  const zipOnly=has?S.fellows.filter(f=>f.zipOnly).length:0;
+  const named=rows.some(r=>councilName(+r.district));
+  const d=new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'});
+  const body=rows.map((r,i)=>`<tr>
+      <td class="n"><b>${esc(r.district)}</b></td>
+      ${named?`<td>${esc(councilName(+r.district)||'—')}</td>`:''}
+      <td class="bar">${has?`<div class="b"><span>${cnt(live[i])}</span><i style="width:${Math.round(live[i]/max*80)}px"></i></div>`:'—'}</td>
+      <td class="n">${has?esc(r.fellowsSchool):'—'}</td>
+      <td class="n">${esc(r.schoolsInDistrict)}</td>
+      ${has?`<td class="n">${r.zipEstimate?'~'+r.zipEstimate:''}</td><td class="top">${esc(r.topSchools||'')}</td>`:''}
+    </tr>`).join('');
+  const totals=`<tr class="tot"><td>Total</td>${named?'<td></td>':''}<td class="n" style="text-align:left">${has?cnt(totLive):'—'}</td><td class="n">${has?cnt(totSchool):'—'}</td><td class="n">${totSchools}</td>${has?`<td class="n">${zipTot?'~'+zipTot:''}</td><td></td>`:''}</tr>`;
+  $('panel').innerHTML=`
+    <div class="sum-head"><h2>BRYC Fellows by Metro Council District</h2>
+      <p>East Baton Rouge Parish · ${esc(d)}${has&&S.roster?' · Roster: '+esc(S.roster.name):''}</p></div>
+    ${has?'':'<p class="note">Load the Fellow roster (below) to add Fellow counts. Until then this shows schools only.</p>'}
+    <div class="tbl"><div class="wrap"><table class="sumtbl">
+      <thead><tr><th class="n">District</th>${named?'<th>Council member</th>':''}<th>Fellows who live here</th><th class="n">Attend school here</th><th class="n">Schools (gr. 8–12)</th>${has?'<th class="n">ZIP-only est.</th><th>Top schools of Fellows who live here</th>':''}</tr></thead>
+      <tbody>${body}${totals}</tbody></table></div></div>
+    ${has?`<p class="note">${cnt(mapped)} of ${S.fellows.length} Fellows have map coordinates; ${cnt(outside)} of them live outside East Baton Rouge's council districts (other parishes). ${zipOnly?`${cnt(zipOnly)} Fellows have only a ZIP code; “ZIP-only est.” spreads them by how much of each ZIP falls in the district and is not included in “live here.” `:''}“Attend school here” counts Fellows whose school sits in the district and leaves out ${S.unmatched.length} unmatched school names.</p>`:''}
+    <p class="note">Boundaries: Open Data BR, Metropolitan Council Districts. Counts under 5 can identify students; check before sharing outside BRYC.</p>
+    <p class="noprint"><button type="button" class="quiet" id="sumPrint">Print</button> <button type="button" class="quiet" id="sumCsv">Download CSV</button></p>`;
+  document.body.classList.add('print-summary'); setPageSize('letter landscape');
+  $('sumPrint').onclick=()=>window.print();
+  $('sumCsv').onclick=()=>{
+    const head=['District',...(named?['Council member']:[]),'Fellows who live here','Fellows who attend school here','Schools (grades 8-12)','ZIP-only estimate','Top schools','Fellows by grade'];
+    const lines=[head, ...rows.map((r,i)=>[r.district,...(named?[councilName(+r.district)]:[]),has?live[i]:'',has?r.fellowsSchool:'',r.schoolsInDistrict,r.zipEstimate||'',r.topSchools||'',r.grades||''])];
+    download('bryc-metro-council-summary.csv', Papa.unparse(lines), 'text/csv');
+  };
+  document.querySelector('aside .scroll').scrollTop=0;
+}
+$('councilSummaryBtn').addEventListener('click',councilSummary);
 $('exportAll').addEventListener('click',()=>{
   if(!S.fellows.length){ alert('Load the Fellow roster first.'); return; }
   const rows=[];
