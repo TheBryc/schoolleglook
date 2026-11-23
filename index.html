@@ -118,9 +118,22 @@ main{position:relative;min-height:0}
 .sumtbl .b span{font-variant-numeric:tabular-nums;min-width:2.2em;text-align:right}
 .sumtbl tr.tot td{font-weight:600;border-top:2px solid var(--ink,#222);border-bottom:0}
 .sumtbl td.top{font-size:12.5px;color:var(--muted)}
+.sum-map{margin:18px 0 6px}
+.sum-map h3{font-size:16px;margin:0 0 2px}
+.sum-map .sub{margin:0 0 8px;color:var(--muted);font-size:12.5px}
+.sum-map svg{width:100%;height:auto;display:block;max-height:640px;margin:0 auto}
+.sum-map path{stroke:#fff;stroke-width:1.5;stroke-linejoin:round;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.sum-map path:hover{stroke:#1d1d1b;stroke-width:2}
+.sum-map text{font-family:var(--sans);font-weight:600;text-anchor:middle;pointer-events:none;paint-order:stroke;stroke-linejoin:round}
+.sum-map .legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;color:var(--muted);margin-top:6px;align-items:center}
+.sum-map .legend i{display:inline-block;width:18px;height:11px;border-radius:2px;margin-right:5px;vertical-align:-1px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 @media print{
   main,form.search,.pickers,.hint,details,.acts,.stripes{display:none!important}
   body.print-summary header,body.print-summary .noprint{display:none!important}
+  html,body,.app{height:auto!important}
+  body.print-summary aside{border-right:0;display:block}
+  body.print-summary .sum-map{break-before:page;page-break-before:always;break-inside:avoid;margin-top:0}
+  body.print-summary .sum-map svg{max-height:5.4in;width:auto;max-width:100%;margin:0 auto}
   body.print-summary .note{font-size:10.5px;margin:6px 0}
   body.print-summary .sum-head h2{font-size:17px}
   body.print-summary aside{width:auto;max-width:none}
@@ -849,6 +862,29 @@ function setPageSize(size){
   if(!st){ st=document.createElement('style'); st.id='pageSize'; document.head.appendChild(st); }
   st.textContent=`@page{size:${size};margin:0.5in}`;
 }
+function councilMapSVG(fc, pctByNum, countByNum){
+  const feats=fc.features.filter(f=>f.geometry && f._num);
+  let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+  const each=(g,fn)=>{ const polys=g.type==='Polygon'?[g.coordinates]:g.type==='MultiPolygon'?g.coordinates:[]; polys.forEach(poly=>poly.forEach(ring=>ring.forEach(fn))); };
+  feats.forEach(f=>each(f.geometry,([x,y])=>{ if(x<minX)minX=x; if(x>maxX)maxX=x; if(y<minY)minY=y; if(y>maxY)maxY=y; }));
+  const kx=Math.cos(((minY+maxY)/2)*Math.PI/180), W=760, pad=6;
+  const scale=(W-2*pad)/((maxX-minX)*kx||1), H=Math.round((maxY-minY)*scale+2*pad);
+  const X=x=>(pad+(x-minX)*kx*scale).toFixed(1), Y=y=>(pad+(maxY-y)*scale).toFixed(1);
+  const pathOf=g=>{ const polys=g.type==='Polygon'?[g.coordinates]:g.type==='MultiPolygon'?g.coordinates:[]; return polys.map(poly=>poly.map(r=>'M'+r.map(([x,y])=>X(x)+','+Y(y)).join('L')+'Z').join('')).join(''); };
+  // Five equal-width bins from 0 to the largest share; one hue, light to dark.
+  const ramp=['#cde2fb','#86b6ef','#3987e5','#256abf','#104281'];
+  const max=Math.max(0.0001,...Object.values(pctByNum));
+  const step=Math.ceil(max/5*10)/10 || 0.1;
+  const bin=v=>Math.min(4,Math.floor(v/step));
+  const paths=feats.map(f=>{ const v=pctByNum[f._num]||0, c=ramp[bin(v)];
+    return `<path d="${pathOf(f.geometry)}" fill="${c}"><title>District ${f._num}: ${v.toFixed(1)}% of Fellows (${countByNum[f._num]||0})</title></path>`; }).join('');
+  const fs=Math.round(W/34);
+  const labels=feats.map(f=>{ const pt=f._pt||interiorPoint(f); if(!pt) return ''; const v=pctByNum[f._num]||0, dark=bin(v)>=2;
+    const fill=dark?'#ffffff':'#1d1d1b', halo=dark?'rgba(0,0,0,.35)':'rgba(255,255,255,.85)';
+    return `<text x="${X(pt[0])}" y="${Y(pt[1])}" fill="${fill}" stroke="${halo}" stroke-width="${fs/5}"><tspan x="${X(pt[0])}" dy="-3" font-size="${fs*0.8}">D${f._num}</tspan><tspan x="${X(pt[0])}" dy="${fs*1.05}" font-size="${fs}">${v.toFixed(1)}%</tspan></text>`; }).join('');
+  const legend=ramp.map((c,i)=>`<span><i style="background:${c}"></i>${(i*step).toFixed(1)}${i===4?'%+':'–'+((i+1)*step).toFixed(1)+'%'}</span>`).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Map of Metro Council districts shaded by share of BRYC Fellows who live in each">${paths}${labels}</svg><div class="legend">${legend}</div>`;
+}
 function councilSummary(){
   const fc=S.data.council;
   if(!fc || !fc.features.length){ $('panel').innerHTML='<p class="warn">Metro Council districts did not load. Check Data sources below.</p>'; return; }
@@ -856,7 +892,7 @@ function councilSummary(){
   $('pickHouse').value=''; $('pickSenate').value=''; $('pickCouncil').value='all';
   const has=S.fellows.length>0;
   const nums=fc.features.map(f=>f._num).filter(Boolean).sort((a,b)=>a-b);
-  const rows=nums.map(n=>districtNumbers('council',n));
+  const rows=nums.map(n=>{ const r=districtNumbers('council',n); r.topSchools=has?groupCount(S.fellows.filter(f=>f.council===n && f.school),f=>f.school).slice(0,4).map(([nm])=>nm).join(', '):''; return r; });
   const live=rows.map(r=>has?S.fellows.filter(f=>f.council===+r.district).length:0);
   const max=Math.max(1,...live);
   const totLive=live.reduce((a,b)=>a+b,0);
@@ -868,6 +904,12 @@ function councilSummary(){
   const zipOnly=has?S.fellows.filter(f=>f.zipOnly).length:0;
   const named=rows.some(r=>councilName(+r.district));
   const d=new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'});
+  const pctBy={}, cntBy={}; nums.forEach((n,i)=>{ cntBy[n]=live[i]; pctBy[n]=has?live[i]/S.fellows.length*100:0; });
+  const inEBR=has?(totLive/S.fellows.length*100):0;
+  const mapHTML=has?`<div class="sum-map"><h3>Share of BRYC Fellows who live in each Metro Council district</h3>
+      <p class="sub">Percent of all ${cnt(S.fellows.length)} Fellows on the roster · ${esc(d)}</p>
+      ${councilMapSVG(fc,pctBy,cntBy)}
+      <p class="note">Together these districts hold ${inEBR.toFixed(1)}% of Fellows. The rest live outside East Baton Rouge Parish or have only a ZIP code, so the districts don't add up to 100%.</p></div>`:'';
   const body=rows.map((r,i)=>`<tr>
       <td class="n"><b>${esc(r.district)}</b></td>
       ${named?`<td>${esc(councilName(+r.district)||'—')}</td>`:''}
@@ -886,6 +928,7 @@ function councilSummary(){
       <tbody>${body}${totals}</tbody></table></div></div>
     ${has?`<p class="note">${cnt(mapped)} of ${S.fellows.length} Fellows have map coordinates; ${cnt(outside)} of them live outside East Baton Rouge's council districts (other parishes). ${zipOnly?`${cnt(zipOnly)} Fellows have only a ZIP code; “ZIP-only est.” spreads them by how much of each ZIP falls in the district and is not included in “live here.” `:''}“Attend school here” counts Fellows whose school sits in the district and leaves out ${S.unmatched.length} unmatched school names.</p>`:''}
     <p class="note">Boundaries: Open Data BR, Metropolitan Council Districts. Counts under 5 can identify students; check before sharing outside BRYC.</p>
+    ${mapHTML}
     <p class="noprint"><button type="button" class="quiet" id="sumPrint">Print</button> <button type="button" class="quiet" id="sumCsv">Download CSV</button></p>`;
   document.body.classList.add('print-summary'); setPageSize('letter landscape');
   $('sumPrint').onclick=()=>window.print();
