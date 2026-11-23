@@ -893,12 +893,15 @@ function councilSummary(){
   const has=S.fellows.length>0;
   const nums=fc.features.map(f=>f._num).filter(Boolean).sort((a,b)=>a-b);
   const rows=nums.map(n=>{ const r=districtNumbers('council',n); r.topSchools=has?groupCount(S.fellows.filter(f=>f.council===n && f.school),f=>f.school).slice(0,4).map(([nm])=>nm).join(', '):''; return r; });
-  const live=rows.map(r=>has?S.fellows.filter(f=>f.council===+r.district).length:0);
+  const exact=rows.map(r=>has?S.fellows.filter(f=>f.council===+r.district).length:0);
+  const zipGroups=has?groupCount(S.fellows.filter(f=>f.zipOnly),f=>f.zip5):[];
+  const zest=rows.map(r=>zipGroups.reduce((a,[z,n])=>a+n*(((S.zipShares[z]||{}).council||{})[+r.district]||0),0));
+  const live=exact.map((e,i)=>Math.round(e+zest[i]));
   const max=Math.max(1,...live);
   const totLive=live.reduce((a,b)=>a+b,0);
   const totSchool=has?S.fellows.filter(f=>f.schoolId && f.schoolId._council).length:0;
   const totSchools=rows.reduce((a,r)=>a+(+r.schoolsInDistrict||0),0);
-  const zipTot=rows.reduce((a,r)=>a+(r.zipEstimate||0),0);
+  const zipTot=Math.round(zest.reduce((a,b)=>a+b,0));
   const mapped=has?S.fellows.filter(f=>f.lat!=null).length:0;
   const outside=has?S.fellows.filter(f=>f.lat!=null && !f.council).length:0;
   const zipOnly=has?S.fellows.filter(f=>f.zipOnly).length:0;
@@ -909,14 +912,14 @@ function councilSummary(){
   const mapHTML=has?`<div class="sum-map"><h3>Share of BRYC Fellows who live in each Metro Council district</h3>
       <p class="sub">Percent of all ${cnt(S.fellows.length)} Fellows on the roster · ${esc(d)}</p>
       ${councilMapSVG(fc,pctBy,cntBy)}
-      <p class="note">Together these districts hold ${inEBR.toFixed(1)}% of Fellows. The rest live outside East Baton Rouge Parish or have only a ZIP code, so the districts don't add up to 100%.</p></div>`:'';
+      <p class="note">Together these districts hold ${inEBR.toFixed(1)}% of Fellows, including those placed by ZIP code. The rest live outside East Baton Rouge Parish, so the districts don't add up to 100%.</p></div>`:'';
   const body=rows.map((r,i)=>`<tr>
       <td class="n"><b>${esc(r.district)}</b></td>
       ${named?`<td>${esc(councilName(+r.district)||'—')}</td>`:''}
       <td class="bar">${has?`<div class="b"><span>${cnt(live[i])}</span><i style="width:${Math.round(live[i]/max*80)}px"></i></div>`:'—'}</td>
       <td class="n">${has?esc(r.fellowsSchool):'—'}</td>
       <td class="n">${esc(r.schoolsInDistrict)}</td>
-      ${has?`<td class="n">${r.zipEstimate?'~'+r.zipEstimate:''}</td><td class="top">${esc(r.topSchools||'')}</td>`:''}
+      ${has?`<td class="n">${Math.round(zest[i])?'~'+Math.round(zest[i]):''}</td><td class="top">${esc(r.topSchools||'')}</td>`:''}
     </tr>`).join('');
   const totals=`<tr class="tot"><td>Total</td>${named?'<td></td>':''}<td class="n" style="text-align:left">${has?cnt(totLive):'—'}</td><td class="n">${has?cnt(totSchool):'—'}</td><td class="n">${totSchools}</td>${has?`<td class="n">${zipTot?'~'+zipTot:''}</td><td></td>`:''}</tr>`;
   $('panel').innerHTML=`
@@ -924,17 +927,17 @@ function councilSummary(){
       <p>East Baton Rouge Parish · ${esc(d)}${has&&S.roster?' · Roster: '+esc(S.roster.name):''}</p></div>
     ${has?'':'<p class="note">Load the Fellow roster (below) to add Fellow counts. Until then this shows schools only.</p>'}
     <div class="tbl"><div class="wrap"><table class="sumtbl">
-      <thead><tr><th class="n">District</th>${named?'<th>Council member</th>':''}<th>Fellows who live here</th><th class="n">Attend school here</th><th class="n">Schools (gr. 8–12)</th>${has?'<th class="n">ZIP-only est.</th><th>Top schools of Fellows who live here</th>':''}</tr></thead>
+      <thead><tr><th class="n">District</th>${named?'<th>Council member</th>':''}<th>Fellows who live here</th><th class="n">Attend school here</th><th class="n">Schools (gr. 8–12)</th>${has?'<th class="n">Of those, est. from ZIP</th><th>Top schools of Fellows who live here</th>':''}</tr></thead>
       <tbody>${body}${totals}</tbody></table></div></div>
-    ${has?`<p class="note">${cnt(mapped)} of ${S.fellows.length} Fellows have map coordinates; ${cnt(outside)} of them live outside East Baton Rouge's council districts (other parishes). ${zipOnly?`${cnt(zipOnly)} Fellows have only a ZIP code; “ZIP-only est.” spreads them by how much of each ZIP falls in the district and is not included in “live here.” `:''}“Attend school here” counts Fellows whose school sits in the district and leaves out ${S.unmatched.length} unmatched school names.</p>`:''}
+    ${has?`<p class="note">${cnt(mapped)} of ${S.fellows.length} Fellows have map coordinates; ${cnt(outside)} of them live outside East Baton Rouge's council districts (other parishes). ${zipOnly?`${cnt(zipOnly)} Fellows have only a ZIP code. They're included in “live here” as an estimate: each is split across districts by how much of their ZIP code falls in each one, then rounded. The “est. from ZIP” column shows how much of each count is estimated. `:''}“Attend school here” counts Fellows whose school sits in the district and leaves out ${S.unmatched.length} unmatched school names.</p>`:''}
     <p class="note">Boundaries: Open Data BR, Metropolitan Council Districts. Counts under 5 can identify students; check before sharing outside BRYC.</p>
     ${mapHTML}
     <p class="noprint"><button type="button" class="quiet" id="sumPrint">Print</button> <button type="button" class="quiet" id="sumCsv">Download CSV</button></p>`;
   document.body.classList.add('print-summary'); setPageSize('letter landscape');
   $('sumPrint').onclick=()=>window.print();
   $('sumCsv').onclick=()=>{
-    const head=['District',...(named?['Council member']:[]),'Fellows who live here','Fellows who attend school here','Schools (grades 8-12)','ZIP-only estimate','Top schools','Fellows by grade'];
-    const lines=[head, ...rows.map((r,i)=>[r.district,...(named?[councilName(+r.district)]:[]),has?live[i]:'',has?r.fellowsSchool:'',r.schoolsInDistrict,r.zipEstimate||'',r.topSchools||'',r.grades||''])];
+    const head=['District',...(named?['Council member']:[]),'Fellows who live here (incl. ZIP estimate)','Placed by address','Estimated from ZIP','Fellows who attend school here','Schools (grades 8-12)','Top schools','Fellows by grade'];
+    const lines=[head, ...rows.map((r,i)=>[r.district,...(named?[councilName(+r.district)]:[]),has?live[i]:'',has?exact[i]:'',has?Math.round(zest[i]*10)/10:'',has?r.fellowsSchool:'',r.schoolsInDistrict,r.topSchools||'',r.grades||''])];
     download('bryc-metro-council-summary.csv', Papa.unparse(lines), 'text/csv');
   };
   document.querySelector('aside .scroll').scrollTop=0;
